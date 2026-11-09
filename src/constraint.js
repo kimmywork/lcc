@@ -103,21 +103,64 @@ export class RankConstraint {
     return symbols;
   }
 
-  decode(symbols) {
+  decode(symbols, options = {}) {
+    const lenient = options.lenient ?? false;
     const writer = new BitWriter();
     let startRank = this.initialRank;
     let pos = 0;
     while (pos < symbols.length) {
       const m = Math.min(this.blockSize, symbols.length - pos);
-      const block = symbols.slice(pos, pos + m);
+      let block = symbols.slice(pos, pos + m);
+      if (lenient) block = this._correctBlock(block, startRank);
       const idx = this._rank(block, startRank);
       const L = this.L[m];
-      if (idx >= (1n << BigInt(L))) throw new Error('constraint: decoded index out of range');
-      writer.writeBigInt(idx, L);
+      const mask = (1n << BigInt(L)) - 1n;
+      // A valid codeword always has idx < 2^L.  In lenient mode a corrected
+      // noisy sequence can land outside the used subset; wrapping keeps the
+      // bitstream length correct and lets RS handle the residual errors.
+      writer.writeBigInt(idx & mask, L);
       startRank = this.rankOf[block[block.length - 1]];
       pos += m;
     }
     return writer;
+  }
+
+  _closestSymbol(rank, symbol) {
+    const list = this.symbolsByRank[rank];
+    let best = list[0];
+    let bestD = Infinity;
+    for (const s of list) {
+      const d = Math.abs(s - symbol);
+      if (d < bestD) {
+        bestD = d;
+        best = s;
+      }
+    }
+    return best;
+  }
+
+  _correctBlock(block, startRank) {
+    const out = block.slice();
+    if (this.rankOf[out[0]] !== startRank) {
+      out[0] = this._closestSymbol(startRank, out[0]);
+    }
+    for (let p = 1; p < out.length; p++) {
+      const prevRank = this.rankOf[out[p - 1]];
+      const obsRank = this.rankOf[out[p]];
+      if (allowed(prevRank, obsRank)) continue;
+      let bestRank = prevRank;
+      let bestD = Infinity;
+      for (let r = 0; r < RANK_COUNT; r++) {
+        if (this.rankCounts[r] === 0 || !allowed(prevRank, r)) continue;
+        const d = Math.abs(r - obsRank);
+        if (d < bestD) {
+          bestD = d;
+          bestRank = r;
+        }
+      }
+      out[p] = this._closestSymbol(bestRank, out[p]);
+    }
+    return out;
   }
 
   _unrank(idx, m, startRank) {

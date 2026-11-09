@@ -10,7 +10,9 @@
   "scripts": {
     "test": "node --test",
     "demo": "node examples/demo.js",
-    "cli": "node src/cli.js"
+    "cli": "node src/cli.js",
+    "build:web": "node scripts/build-web.js",
+    "web": "node scripts/serve-web.js"
   },
   "engines": {
     "node": ">=18"

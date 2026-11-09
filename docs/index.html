@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>LCC — Layered Chromatic Code</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"></span>
+        <div>
+          <h1>LCC</h1>
+          <p>Layered Chromatic Code · 方形分层彩色码</p>
+        </div>
+      </div>
+      <p class="hero-note">
+        L1/L2/L3a/L3b 共用同一套方形几何；可逆亮度约束、真 RS 纠错、BCH 格式带。
+        摄像头模式建议使用 <code>constraint: off</code> 的码面。
+      </p>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="card">
+      <div class="card-head">
+        <h2>生成码面</h2>
+        <span class="pill">Encode</span>
+      </div>
+
+      <label class="field">
+        <span>文本内容</span>
+        <textarea id="text" rows="6" placeholder="输入要编码的文本，例如 https://example.com 或一段中文……"></textarea>
+      </label>
+
+      <div class="example-row">
+        <span class="muted">示例：</span>
+        <button class="ghost small" data-example="心经.txt">心经</button>
+        <button class="ghost small" data-example="金刚经.txt">金刚经</button>
+      </div>
+
+      <div class="grid-controls">
+        <label class="field">
+          <span>层</span>
+          <select id="layer">
+            <option value="L1">L1 · 黑白</option>
+            <option value="L2" selected>L2 · 16 灰</option>
+            <option value="L3a">L3a · 64 色</option>
+            <option value="L3b">L3b · 256 色</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>色板</span>
+          <select id="palette">
+            <option value="bucketed" selected>bucketed（推荐）</option>
+            <option value="global">global（最大色差）</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>选档</span>
+          <select id="mode">
+            <option value="fill" selected>fill（铺满）</option>
+            <option value="compact">compact（居中）</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>画布</span>
+          <select id="size">
+            <option value="512">512 × 512</option>
+            <option value="1024" selected>1024 × 1024</option>
+            <option value="2048">2048 × 2048</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="check">
+        <input type="checkbox" id="constraint" checked />
+        <span>启用可逆邻差约束（清洁数字码推荐；摄像头/强色偏场景建议关闭）</span>
+      </label>
+
+      <div class="actions">
+        <button id="generate" class="primary">生成</button>
+        <button id="download" class="secondary" disabled>下载 PNG</button>
+      </div>
+
+      <div class="preview-wrap">
+        <canvas id="encodeCanvas" class="preview" width="512" height="512"></canvas>
+      </div>
+      <div id="encodeMeta" class="meta"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>扫描 / 拍照识别</h2>
+        <span class="pill">Decode</span>
+      </div>
+
+      <div class="actions">
+        <label class="primary file-btn">
+          选择照片
+          <input id="file" type="file" accept="image/*" capture="environment" hidden />
+        </label>
+        <button id="cameraStart" class="secondary">打开摄像头</button>
+        <button id="cameraStop" class="ghost" disabled>关闭</button>
+      </div>
+
+      <div class="camera-wrap">
+        <video id="video" playsinline muted></video>
+        <div id="cameraHint" class="camera-hint">摄像头未开启</div>
+      </div>
+
+      <div class="actions">
+        <button id="capture" class="primary" disabled>拍照并识别</button>
+        <label class="check inline">
+          <input type="checkbox" id="continuous" />
+          <span>连续扫描</span>
+        </label>
+      </div>
+
+      <div class="preview-wrap">
+        <canvas id="scanCanvas" class="preview" width="512" height="512"></canvas>
+      </div>
+
+      <div id="scanStatus" class="status">等待照片或摄像头画面…</div>
+      <div id="scanResult" class="result" hidden>
+        <div class="result-head">
+          <span>识别结果</span>
+          <button id="copy" class="ghost small">复制</button>
+        </div>
+        <pre id="scanText"></pre>
+        <div id="scanMeta" class="meta"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>
+      静态站点，可直接部署到 GitHub Pages（Pages 源选择 <code>/docs</code>）。
+      摄像头需要 HTTPS 或 localhost。
+      <a href="./lcc-spec.md">LCC 规范</a>
+    </p>
+  </footer>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

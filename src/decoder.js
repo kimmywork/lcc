@@ -1,85 +1,24 @@
 /**
- * LCC decoder for clean / axis-aligned images.
+ * LCC decoder.
  *
- * Phase A scope: deterministic round-trip from the encoder's own PNG output.
- * The detector uses the custom 1:2:1:2:1 finder profile to recover the module
- * size, symbol origin and version.  Camera perspective, multi-frame and
- * calibration are Phase B.
+ * Phase A: axis-aligned clean images (screenshots, generated PNGs).
+ * Phase B: perspective camera photos via connected-component finder
+ * detection + homography, plus in-code colour calibration.
  */
 
 import { BitWriter } from './bitstream.js';
-import { ECC_LEVELS, LAYERS, LAYER_BY_ID, versionToSize, sizeToVersion } from './constants.js';
+import { buildCalibrator } from './calibration.js';
 import { luminance, nearestIndex, rgbToLab } from './color.js';
+import { ECC_LEVELS, LAYERS, LAYER_BY_ID, sizeToVersion, versionToSize } from './constants.js';
 import { RankConstraint } from './constraint.js';
+import { detectPerspective } from './detector.js';
 import { rsDecodeBlocks } from './ecc/rs.js';
 import { parseFrame } from './frame.js';
 import { readFormatBand } from './format/format-band.js';
+import { FINDER_PATTERN, grayscale, robustThreshold, sampleImage } from './image-utils.js';
 import { BLACK, WHITE, makeLayout } from './layout.js';
 import { generatePalette } from './palettes.js';
 import { makeWhitening } from './whitening.js';
-
-function grayscale(image) {
-  const { width, height, data } = image;
-  const gray = new Uint8Array(width * height);
-  for (let i = 0, p = 0; i < gray.length; i++, p += 3) {
-    gray[i] = Math.round(0.2126 * data[p] + 0.7152 * data[p + 1] + 0.0722 * data[p + 2]);
-  }
-  return gray;
-}
-
-function otsuThreshold(gray) {
-  const hist = new Uint32Array(256);
-  for (let i = 0; i < gray.length; i++) hist[gray[i]]++;
-  const total = gray.length;
-  let sum = 0;
-  for (let i = 0; i < 256; i++) sum += i * hist[i];
-  let sumB = 0;
-  let wB = 0;
-  let best = -1;
-  let threshold = 128;
-  for (let t = 0; t < 256; t++) {
-    wB += hist[t];
-    if (wB === 0) continue;
-    const wF = total - wB;
-    if (wF === 0) break;
-    sumB += t * hist[t];
-    const mB = sumB / wB;
-    const mF = (sum - sumB) / wF;
-    const between = wB * wF * (mB - mF) ** 2;
-    if (between > best) {
-      best = between;
-      threshold = t;
-    }
-  }
-  return threshold;
-}
-
-// Expected 7x7 finder pattern: 0 = black, 1 = white.
-const FINDER_PATTERN = [
-  [0, 0, 0, 0, 0, 0, 0],
-  [0, 1, 1, 1, 1, 1, 0],
-  [0, 1, 1, 1, 1, 1, 0],
-  [0, 1, 1, 0, 1, 1, 0],
-  [0, 1, 1, 1, 1, 1, 0],
-  [0, 1, 1, 1, 1, 1, 0],
-  [0, 0, 0, 0, 0, 0, 0],
-];
-
-function finderScore(gray, width, height, center, threshold) {
-  let matches = 0;
-  let total = 0;
-  for (let r = 0; r < 7; r++) {
-    for (let c = 0; c < 7; c++) {
-      const x = Math.round(center.x + (c - 3) * center.unit);
-      const y = Math.round(center.y + (r - 3) * center.unit);
-      if (x < 0 || x >= width || y < 0 || y >= height) continue;
-      const bit = gray[y * width + x] < threshold ? 0 : 1;
-      if (bit === FINDER_PATTERN[r][c]) matches++;
-      total++;
-    }
-  }
-  return total === 0 ? 0 : matches / total;
-}
 
 function finderCandidates(gray, width, height, threshold, horizontal) {
   const candidates = [];
@@ -122,20 +61,28 @@ function finderCandidates(gray, width, height, threshold, horizontal) {
   return candidates;
 }
 
+function finderScore(gray, width, height, center, threshold) {
+  let matches = 0;
+  let total = 0;
+  for (let r = 0; r < 7; r++) {
+    for (let c = 0; c < 7; c++) {
+      const x = Math.round(center.x + (c - 3) * center.unit);
+      const y = Math.round(center.y + (r - 3) * center.unit);
+      if (x < 0 || x >= width || y < 0 || y >= height) continue;
+      const bit = gray[y * width + x] < threshold ? 0 : 1;
+      if (bit === FINDER_PATTERN[r][c]) matches++;
+      total++;
+    }
+  }
+  return total === 0 ? 0 : matches / total;
+}
+
 export function detectSymbol(image) {
   const { width, height } = image;
   const gray = grayscale(image);
-  let mn = 255;
-  let mx = 0;
-  for (let i = 0; i < gray.length; i++) {
-    if (gray[i] < mn) mn = gray[i];
-    if (gray[i] > mx) mx = gray[i];
-  }
-  if (mn === mx) throw new Error('LCC detect: image has no contrast');
-  let threshold = otsuThreshold(gray);
-  // With a two-valued image Otsu can return the minimum; force a mid-gap
-  // threshold in that case.
-  if (threshold <= mn || threshold >= mx) threshold = Math.floor((mn + mx) / 2);
+  const stats = robustThreshold(gray);
+  if (stats.contrast < 20) throw new Error('LCC detect: image has no contrast');
+  const threshold = stats.threshold;
   const rowC = finderCandidates(gray, width, height, threshold, true);
   const colC = finderCandidates(gray, width, height, threshold, false);
   const centers = [];
@@ -179,7 +126,6 @@ export function detectSymbol(image) {
   }
   if (clusters.length < 3) throw new Error('LCC detect: not enough finder clusters');
 
-  // Pick TL / TR / BL by geometry.
   const bySum = [...clusters].sort((a, b) => (a.x + a.y) - (b.x + b.y));
   const tl = bySum[0];
   let tr = null;
@@ -211,31 +157,15 @@ export function detectSymbol(image) {
 
   const originX = tl.x - 3.5 * s;
   const originY = tl.y - 3.5 * s;
-  return { originX, originY, s, N, version, threshold, finders: { tl, tr, bl } };
+  const sampler = (row, col) => sampleModule(image, originX, originY, s, row, col);
+  return { originX, originY, s, N, version, threshold, sampler, finders: { tl, tr, bl } };
 }
 
 export function sampleModule(image, originX, originY, s, row, col) {
-  const { width, height, data } = image;
-  const cx = Math.floor(originX + (col + 0.5) * s);
-  const cy = Math.floor(originY + (row + 0.5) * s);
+  const cx = originX + (col + 0.5) * s;
+  const cy = originY + (row + 0.5) * s;
   const radius = Math.max(0, Math.floor(s / 4) - 1);
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  let n = 0;
-  for (let y = cy - radius; y <= cy + radius; y++) {
-    if (y < 0 || y >= height) continue;
-    for (let x = cx - radius; x <= cx + radius; x++) {
-      if (x < 0 || x >= width) continue;
-      const p = (y * width + x) * 3;
-      r += data[p];
-      g += data[p + 1];
-      b += data[p + 2];
-      n++;
-    }
-  }
-  if (n === 0) return [255, 255, 255];
-  return [Math.round(r / n), Math.round(g / n), Math.round(b / n)];
+  return sampleImage(image, cx, cy, radius);
 }
 
 function decodeText(payload) {
@@ -246,22 +176,39 @@ function decodeText(payload) {
   }
 }
 
-export function decode(image, options = {}) {
-  const det = options.moduleSize && options.version && options.origin
-    ? {
-      originX: options.origin.x,
-      originY: options.origin.y,
-      s: options.moduleSize,
-      version: options.version,
-      N: versionToSize(options.version),
-      threshold: options.threshold ?? 128,
-    }
-    : detectSymbol(image);
+function makeExplicitDetector(image, options) {
+  const s = options.moduleSize;
+  const originX = options.origin.x;
+  const originY = options.origin.y;
+  return {
+    originX,
+    originY,
+    s,
+    version: options.version,
+    N: versionToSize(options.version),
+    threshold: options.threshold ?? 128,
+    sampler: (row, col) => sampleModule(image, originX, originY, s, row, col),
+  };
+}
 
+export function decode(image, options = {}) {
+  const mode = options.detector ?? 'axis';
+  let det;
+  if (options.sampler) {
+    det = { ...options, threshold: options.threshold ?? 128 };
+  } else if (options.moduleSize && options.version && options.origin) {
+    det = makeExplicitDetector(image, options);
+  } else if (mode === 'perspective') {
+    det = detectPerspective(image);
+  } else {
+    det = detectSymbol(image);
+  }
+
+  const sampler = det.sampler ?? ((row, col) => sampleModule(image, det.originX, det.originY, det.s, row, col));
   const version = options.version ?? det.version ?? sizeToVersion(det.N);
   const layoutProbe = makeLayout({ version, layer: 'L1', paletteMode: 'bucketed' });
   const getFormatSymbol = (r, c) => {
-    const rgb = sampleModule(image, det.originX, det.originY, det.s, r, c);
+    const rgb = sampler(r, c);
     return luminance(rgb) < det.threshold ? BLACK : WHITE;
   };
   const fmt = readFormatBand(getFormatSymbol, layoutProbe);
@@ -275,12 +222,18 @@ export function decode(image, options = {}) {
 
   const paletteInfo = generatePalette(layerName, { mode: paletteMode, harmony });
   const layout = makeLayout({ version, layer: layerName, paletteMode });
+  const calibrator = buildCalibrator({
+    layerName,
+    layout,
+    paletteInfo,
+    sampler,
+    threshold: det.threshold,
+  });
 
   const symbols = new Array(layout.dataCount);
   for (let i = 0; i < layout.dataCoords.length; i++) {
     const [r, c] = layout.dataCoords[i];
-    const rgb = sampleModule(image, det.originX, det.originY, det.s, r, c);
-    symbols[i] = nearestIndex(rgbToLab(rgb), paletteInfo.paletteLab);
+    symbols[i] = calibrator.classify(sampler(r, c));
   }
 
   let writer;
@@ -291,7 +244,7 @@ export function decode(image, options = {}) {
     capacityBits = layout.dataCount;
   } else if (constraint) {
     const rc = new RankConstraint(paletteInfo);
-    writer = rc.decode(symbols);
+    writer = rc.decode(symbols, { lenient: true });
     capacityBits = rc.capacityBitsForModules(layout.dataCount);
   } else {
     const bitsPerModule = LAYERS[layerName].bitsPerModule;
@@ -326,9 +279,21 @@ export function decode(image, options = {}) {
       capacityBits,
       rsSymbols: S,
       correctedSymbols: rs.corrected,
+      calibration: calibrator.type,
       flags: frame.flags,
     },
     detection: det,
   };
 }
 
+export function decodeAuto(image, options = {}) {
+  const errors = [];
+  for (const detector of ['axis', 'perspective']) {
+    try {
+      return decode(image, { ...options, detector });
+    } catch (e) {
+      errors.push(`${detector}: ${e.message}`);
+    }
+  }
+  throw new Error(`LCC decode failed (${errors.join(' | ')})`);
+}

@@ -150,17 +150,42 @@ export function makeLayout({ version, layer: layerName, paletteMode = 'bucketed'
   for (let c = 8; c <= N - 9; c++) set(6, c, c % 2 === 0 ? blackSym : whiteSym);
   for (let r = 8; r <= N - 9; r++) set(r, 6, r % 2 === 0 ? blackSym : whiteSym);
 
-  // --- format band ----------------------------------------------------------
+  // --- alignment + format band ---------------------------------------------
   const formatBlocks = N < 33 ? 1 : N < 57 ? 2 : 3;
   const formatRowsPerCopy = formatBlocks * 2;
   const formatCols = 8;
-  const formatCol0 = N - formatCols;
   const formatCopies = [];
-  for (let copy = 0; copy < 2; copy++) {
-    const row0 = N - (2 - copy) * formatRowsPerCopy;
-    formatCopies.push({ row0, col0: formatCol0, rows: formatRowsPerCopy, cols: formatCols });
-    for (let r = 0; r < formatRowsPerCopy; r++) {
-      for (let c = 0; c < formatCols; c++) set(row0 + r, formatCol0 + c, whiteSym);
+  let alignment = null;
+
+  if (N >= 33) {
+    // 5x5 alignment ring at the bottom-right corner, with a 1-module white
+    // border.  Its centre is the fourth homography point for camera photos.
+    const base = N - 7;
+    for (let r = 0; r < 7; r++) {
+      for (let c = 0; c < 7; c++) set(base + r, base + c, whiteSym);
+    }
+    for (let r = 0; r < 5; r++) {
+      for (let c = 0; c < 5; c++) {
+        const black = r === 0 || r === 4 || c === 0 || c === 4 || (r === 2 && c === 2);
+        set(base + 1 + r, base + 1 + c, black ? blackSym : whiteSym);
+      }
+    }
+    alignment = { row: base, col: base, size: 7, centerRow: N - 3.5, centerCol: N - 3.5 };
+
+    // Format copies near the top-right and bottom-left finders.
+    formatCopies.push({ row0: 8, col0: N - formatCols, rows: formatRowsPerCopy, cols: formatCols });
+    formatCopies.push({ row0: N - 8, col0: 8, rows: formatRowsPerCopy, cols: formatCols });
+  } else {
+    // Small versions keep two stacked copies at the bottom-right.
+    for (let copy = 0; copy < 2; copy++) {
+      const row0 = N - (2 - copy) * formatRowsPerCopy;
+      formatCopies.push({ row0, col0: N - formatCols, rows: formatRowsPerCopy, cols: formatCols });
+    }
+  }
+
+  for (const copy of formatCopies) {
+    for (let r = 0; r < copy.rows; r++) {
+      for (let c = 0; c < copy.cols; c++) set(copy.row0 + r, copy.col0 + c, whiteSym);
     }
   }
 
@@ -233,6 +258,7 @@ export function makeLayout({ version, layer: layerName, paletteMode = 'bucketed'
     dataCount: dataCoords.length,
     format: { blocksPerCopy: formatBlocks, rowsPerCopy: formatRowsPerCopy, cols: formatCols, copies: formatCopies },
     hub,
+    alignment,
     grayBlocks,
     paletteBlocks,
     endpointBlocks,

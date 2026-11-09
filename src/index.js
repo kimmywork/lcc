@@ -3,7 +3,9 @@
  */
 
 export { encode, capacityFor, chooseVersionAndScale } from './encoder.js';
-export { decode, detectSymbol, sampleModule } from './decoder.js';
+export { decode, decodeAuto, detectSymbol, sampleModule } from './decoder.js';
+export { detectPerspective, computeHomography, applyHomography } from './detector.js';
+export { buildCalibrator } from './calibration.js';
 export { generatePalette } from './palettes.js';
 export { makeLayout, hilbertOrder } from './layout.js';
 export { LAYERS, LAYER_BY_ID, versionToSize, sizeToVersion } from './constants.js';

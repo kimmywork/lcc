@@ -158,11 +158,23 @@ export function readFormatBand(getSymbol, layout) {
     if (ok) decodedCopies.push(chunks);
   }
   if (decodedCopies.length === 0) throw new Error('LCC format band: no valid copy');
-  const first = decodedCopies[0];
-  for (let i = 1; i < decodedCopies.length; i++) {
-    if (decodedCopies[i].join(',') !== first.join(',')) {
-      throw new Error('LCC format band: mirrored copies disagree');
+  const keyOf = (chunks) => chunks.join(',');
+  const counts = new Map();
+  for (const chunks of decodedCopies) {
+    const k = keyOf(chunks);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  let bestKey = null;
+  let bestCount = 0;
+  for (const [k, count] of counts) {
+    if (count > bestCount) {
+      bestCount = count;
+      bestKey = k;
     }
   }
-  return unpackFormatPayload(first, blocksPerCopy);
+  if (bestCount < 2 && decodedCopies.length > 1) {
+    throw new Error('LCC format band: copies disagree without a majority');
+  }
+  const chosen = decodedCopies.find((chunks) => keyOf(chunks) === bestKey);
+  return unpackFormatPayload(chosen, blocksPerCopy);
 }
