@@ -8,7 +8,8 @@
  */
 
 import { versionToSize } from './constants.js';
-import { FINDER_PATTERN, grayscale, robustThreshold, sampleImage } from './image-utils.js';
+import { FINDER_PATTERN, sampleImage } from './image-utils.js';
+import { preprocessVariants } from './preprocess.js';
 
 function solveReal(A, b) {
   const n = b.length;
@@ -61,13 +62,13 @@ export function applyHomography(H, u, v) {
   ];
 }
 
-export function ringComponents(gray, width, height, threshold) {
+export function ringComponents(mask, width, height) {
   const visited = new Uint8Array(width * height);
   const stack = new Int32Array(width * height);
   const out = [];
   const minSide = Math.min(width, height);
-  for (let start = 0; start < gray.length; start++) {
-    if (visited[start] || gray[start] >= threshold) continue;
+  for (let start = 0; start < mask.length; start++) {
+    if (visited[start] || !mask[start]) continue;
     let sp = 0;
     stack[sp++] = start;
     visited[start] = 1;
@@ -97,7 +98,7 @@ export function ringComponents(gray, width, height, threshold) {
           const xx = x + dx;
           if (xx < 0 || xx >= width) continue;
           const q = yy * width + xx;
-          if (!visited[q] && gray[q] < threshold) {
+          if (!visited[q] && mask[q]) {
             visited[q] = 1;
             stack[sp++] = q;
           }
@@ -108,21 +109,35 @@ export function ringComponents(gray, width, height, threshold) {
     const bh = maxY - minY + 1;
     if (area < 20 || bw < 7 || bh < 7) continue;
     const aspect = bw / bh;
-    if (aspect < 0.45 || aspect > 2.2) continue;
+    if (aspect < 0.3 || aspect > 3.2) continue;
     const fill = area / (bw * bh);
-    if (fill < 0.22 || fill > 0.8) continue;
+    if (fill < 0.15 || fill > 0.9) continue;
     const cx = sumX / area;
     const cy = sumY / area;
-    const probes = [[bw * 0.25, 0], [-bw * 0.25, 0], [0, bh * 0.25], [0, -bh * 0.25]];
-    let white = 0;
-    for (const [dx, dy] of probes) {
-      const x = Math.round(cx + dx);
-      const y = Math.round(cy + dy);
-      if (x >= 0 && x < width && y >= 0 && y < height && gray[y * width + x] >= threshold) white++;
-    }
-    if (white < 3) continue;
     const s = Math.sqrt(area / 24);
     if (s < 2 || s > minSide / 10) continue;
+
+    // Orientation-invariant ring check: the finder has a white ring at about
+    // 1.75 module radii and a black outer ring at about 3.2 module radii.
+    let whiteHits = 0;
+    let blackHits = 0;
+    let probes = 0;
+    for (let a = 0; a < 16; a++) {
+      const angle = (a / 16) * Math.PI * 2;
+      const x1 = Math.round(cx + Math.cos(angle) * 1.75 * s);
+      const y1 = Math.round(cy + Math.sin(angle) * 1.75 * s);
+      const x2 = Math.round(cx + Math.cos(angle) * 3.2 * s);
+      const y2 = Math.round(cy + Math.sin(angle) * 3.2 * s);
+      if (x1 >= 0 && x1 < width && y1 >= 0 && y1 < height) {
+        probes++;
+        if (!mask[y1 * width + x1]) whiteHits++;
+      }
+      if (x2 >= 0 && x2 < width && y2 >= 0 && y2 < height) {
+        if (mask[y2 * width + x2]) blackHits++;
+      }
+    }
+    if (probes < 8) continue;
+    if (whiteHits < probes * 0.6 || blackHits < probes * 0.6) continue;
     out.push({ x: cx, y: cy, s, area, bw, bh, fill });
   }
   out.sort((a, b) => b.area - a.area);
@@ -137,14 +152,14 @@ const ALIGNMENT_PATTERN = [
   [0, 0, 0, 0, 0],
 ];
 
-function timingScore(H, image, threshold, N) {
+function timingScore(H, image, thresholdAt, N) {
   let matches = 0;
   let total = 0;
   for (let c = 8; c <= N - 9; c++) {
     const [x, y] = applyHomography(H, c + 0.5, 6.5);
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     const rgb = sampleImage(image, x, y, 1);
-    const bit = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] < threshold ? 0 : 1;
+    const bit = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] < thresholdAt(x, y) ? 0 : 1;
     if (bit === (c % 2 === 0 ? 0 : 1)) matches++;
     total++;
   }
@@ -152,14 +167,14 @@ function timingScore(H, image, threshold, N) {
     const [x, y] = applyHomography(H, 6.5, r + 0.5);
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     const rgb = sampleImage(image, x, y, 1);
-    const bit = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] < threshold ? 0 : 1;
+    const bit = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] < thresholdAt(x, y) ? 0 : 1;
     if (bit === (r % 2 === 0 ? 0 : 1)) matches++;
     total++;
   }
   return total === 0 ? 0 : matches / total;
 }
 
-function alignmentScore(H, image, threshold, N) {
+function alignmentScore(H, image, thresholdAt, N) {
   const row0 = N - 6;
   const col0 = N - 6;
   let matches = 0;
@@ -170,7 +185,7 @@ function alignmentScore(H, image, threshold, N) {
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
       const rgb = sampleImage(image, x, y, 1);
       const lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
-      const bit = lum < threshold ? 0 : 1;
+      const bit = lum < thresholdAt(x, y) ? 0 : 1;
       if (bit === ALIGNMENT_PATTERN[r][c]) matches++;
       total++;
     }
@@ -178,7 +193,7 @@ function alignmentScore(H, image, threshold, N) {
   return total === 0 ? 0 : matches / total;
 }
 
-function finderScore(H, image, threshold, row0, col0) {
+function finderScore(H, image, thresholdAt, row0, col0) {
   let matches = 0;
   let total = 0;
   for (let r = 0; r < 7; r++) {
@@ -187,7 +202,7 @@ function finderScore(H, image, threshold, row0, col0) {
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
       const rgb = sampleImage(image, x, y, 1);
       const lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
-      const bit = lum < threshold ? 0 : 1;
+      const bit = lum < thresholdAt(x, y) ? 0 : 1;
       if (bit === FINDER_PATTERN[r][c]) matches++;
       total++;
     }
@@ -216,7 +231,7 @@ function* triples(arr) {
   }
 }
 
-function darkCorners(gray, width, height, threshold) {
+function darkCorners(mask, width, height) {
   let minSum = Infinity;
   let maxSum = -Infinity;
   let minDiff = Infinity;
@@ -227,7 +242,7 @@ function darkCorners(gray, width, height, threshold) {
   let pMaxDiff = null;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      if (gray[y * width + x] >= threshold) continue;
+      if (!mask[y * width + x]) continue;
       const s = x + y;
       const d = x - y;
       if (s < minSum) { minSum = s; pMinSum = [x, y]; }
@@ -275,15 +290,12 @@ function assignCorners(list, tl, tr, bl) {
 export function detectPerspective(image, options = {}) {
   const debug = options.debug ?? false;
   const { width, height } = image;
-  const gray = grayscale(image);
-  const stats = robustThreshold(gray);
-  if (stats.contrast < 20) throw new Error('LCC perspective: image has no contrast');
-  const threshold = stats.threshold;
-  const allCandidates = ringComponents(gray, width, height, threshold);
-  const candidates = allCandidates.slice(0, 10);
+  const variant = options.variant ?? preprocessVariants(image)[0];
+  const { mask, thresholdAt } = variant;
+  const candidates = ringComponents(mask, width, height).slice(0, 10);
   if (debug) console.log('[perspective] candidates', candidates.map((c) => ({ x: +c.x.toFixed(1), y: +c.y.toFixed(1), s: +c.s.toFixed(2) })));
   if (candidates.length < 3) throw new Error('LCC perspective: not enough ring candidates');
-  const cornerSet = darkCorners(gray, width, height, threshold);
+  const cornerSet = darkCorners(mask, width, height);
   if (!cornerSet) throw new Error('LCC perspective: no dark corners');
   const cornerList = [cornerSet.minSum, cornerSet.maxSum, cornerSet.minDiff, cornerSet.maxDiff];
 
@@ -326,13 +338,13 @@ export function detectPerspective(image, options = {}) {
         const N = versionToSize(v);
         let H = null;
         let alignment = null;
-        if (N >= 33) {
+        if (N >= 25) {
           const expectedBR = { x: tr.x + bl.x - tl.x, y: tr.y + bl.y - tl.y };
           const maxD = 0.35 * Math.max(distance(tl, tr), distance(tl, bl));
           const avgArea = (tl.area + tr.area + bl.area) / 3;
           let bestAlign = null;
           let bestD = Infinity;
-          for (const c of allCandidates) {
+          for (const c of candidates) {
             if (c === tl || c === tr || c === bl) continue;
             const d = Math.hypot(c.x - expectedBR.x, c.y - expectedBR.y);
             if (d > maxD) continue;
@@ -357,18 +369,18 @@ export function detectPerspective(image, options = {}) {
           H = computeHomography(canonical, dst);
         }
         if (!H) continue;
-        const scoreTL = finderScore(H, image, threshold, 0, 0);
-        const scoreTR = finderScore(H, image, threshold, 0, N - 7);
-        const scoreBL = finderScore(H, image, threshold, N - 7, 0);
+        const scoreTL = finderScore(H, image, thresholdAt, 0, 0);
+        const scoreTR = finderScore(H, image, thresholdAt, 0, N - 7);
+        const scoreBL = finderScore(H, image, thresholdAt, N - 7, 0);
         let scoreA = 1;
         if (alignment) {
-          scoreA = alignmentScore(H, image, threshold, N);
-          if (scoreA < 0.75) continue;
+          scoreA = alignmentScore(H, image, thresholdAt, N);
+          if (scoreA < 0.65) continue;
         }
         const minScore = Math.min(scoreTL, scoreTR, scoreBL, scoreA);
-        const scoreT = timingScore(H, image, threshold, N);
+        const scoreT = timingScore(H, image, thresholdAt, N);
         if (debug) console.log('[perspective] v', v, 'N', N, 'scores', scoreTL.toFixed(3), scoreTR.toFixed(3), scoreBL.toFixed(3), 'align', scoreA.toFixed(3), 'timing', scoreT.toFixed(3), 'min', minScore.toFixed(3));
-        if (minScore < 0.75) continue;
+        if (minScore < 0.65) continue;
         const consistency = 1 - Math.min(1, Math.abs(n1 - n2) / N);
         const total = minScore + 0.5 * scoreT + 0.1 * consistency;
         if (!best || total > best.score) {
@@ -376,7 +388,13 @@ export function detectPerspective(image, options = {}) {
             version: v,
             N,
             s: (tl.s + tr.s + bl.s) / 3,
-            threshold,
+            threshold: thresholdAt(width / 2, height / 2),
+            thresholdAt,
+            thresholdAtRowCol: (row, col) => {
+              const [x, y] = applyHomography(H, col + 0.5, row + 0.5);
+              return thresholdAt(x, y);
+            },
+            pointAt: (row, col) => applyHomography(H, col + 0.5, row + 0.5),
             homography: H,
             finders: { tl, tr, bl },
             score: total,
@@ -385,7 +403,8 @@ export function detectPerspective(image, options = {}) {
             alignmentScore: scoreA,
             sampler: (row, col) => {
               const [x, y] = applyHomography(H, col + 0.5, row + 0.5);
-              return sampleImage(image, x, y, 1);
+              const radius = Math.max(1, Math.floor(((tl.s + tr.s + bl.s) / 3) / 4));
+              return sampleImage(image, x, y, radius);
             },
           };
         }

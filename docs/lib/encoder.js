@@ -49,6 +49,7 @@ export function chooseVersionAndScale({
   payloadSize,
   layerName,
   paletteInfo,
+  harmony = false,
   constraint,
   width,
   height,
@@ -61,7 +62,7 @@ export function chooseVersionAndScale({
   const minSide = Math.min(width, height);
   if (mode === 'compact') {
     for (let version = minVersion; version <= 100; version++) {
-      const layout = makeLayout({ version, layer: layerName, paletteMode: paletteInfo.mode });
+      const layout = makeLayout({ version, layer: layerName, paletteMode: paletteInfo.mode, harmony, paletteInfo });
       const cap = capacityFor(layout, layerName, paletteInfo, constraint);
       if (cap.payloadCapacity >= payloadSize) {
         const s = Math.floor(minSide / (layout.N + 2 * quietZone));
@@ -77,7 +78,7 @@ export function chooseVersionAndScale({
     if (nMax < 21) continue;
     let version = Math.min(100, Math.floor((nMax - 21) / 4) + 1);
     if (version < minVersion) continue;
-    const layout = makeLayout({ version, layer: layerName, paletteMode: paletteInfo.mode });
+    const layout = makeLayout({ version, layer: layerName, paletteMode: paletteInfo.mode, harmony, paletteInfo });
     const cap = capacityFor(layout, layerName, paletteInfo, constraint);
     if (cap.payloadCapacity >= payloadSize) {
       return { version, layout, cap, moduleSize: s };
@@ -142,7 +143,7 @@ export function encode(payload, options = {}) {
     if (version < minVersion) {
       throw new Error('LCC: non-default palette/seed requires version >= 4 (N >= 33)');
     }
-    const layout = makeLayout({ version, layer: layerName, paletteMode });
+    const layout = makeLayout({ version, layer: layerName, paletteMode, harmony, paletteInfo });
     const cap = capacityFor(layout, layerName, paletteInfo, constraint);
     let s = options.moduleSize ?? Math.floor(Math.min(width, height) / (layout.N + 2 * quietZone));
     s = Math.max(minModulePx, Math.min(s, maxModulePx));
@@ -152,6 +153,7 @@ export function encode(payload, options = {}) {
       payloadSize: payloadBytes.length,
       layerName,
       paletteInfo,
+      harmony,
       constraint,
       width,
       height,

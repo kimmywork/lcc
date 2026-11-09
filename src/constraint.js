@@ -223,3 +223,81 @@ export class RankConstraint {
     return idx;
   }
 }
+
+/**
+ * Soft-input Viterbi correction over the 16 luminance ranks.
+ *
+ * costs[i][symbol] is the colour cost of palette symbol `symbol` at data
+ * position i.  The path is forced to start at `initialRank` and every
+ * transition obeys |rank_i - rank_{i-1}| <= RANK_MAX_DIFF.  The returned
+ * symbol sequence is therefore a valid constrained codeword candidate; the
+ * enumerative decoder ranks it and RS handles the residual errors.
+ */
+export function viterbiCorrect(costs, paletteInfo, initialRank = 8) {
+  const D = costs.length;
+  if (D === 0) return new Int16Array(0);
+  const bestCost = new Array(D);
+  const bestSym = new Array(D);
+  for (let i = 0; i < D; i++) {
+    const c = costs[i];
+    const bc = new Float64Array(RANK_COUNT).fill(Infinity);
+    const bs = new Int16Array(RANK_COUNT).fill(-1);
+    for (let r = 0; r < RANK_COUNT; r++) {
+      for (const s of paletteInfo.symbolsByRank[r]) {
+        if (c[s] < bc[r]) {
+          bc[r] = c[s];
+          bs[r] = s;
+        }
+      }
+    }
+    bestCost[i] = bc;
+    bestSym[i] = bs;
+  }
+
+  let dp = new Float64Array(RANK_COUNT).fill(Infinity);
+  const prev = Array.from({ length: D }, () => new Int8Array(RANK_COUNT).fill(-1));
+  dp[initialRank] = bestCost[0][initialRank];
+  for (let i = 1; i < D; i++) {
+    const ndp = new Float64Array(RANK_COUNT).fill(Infinity);
+    for (let r = 0; r < RANK_COUNT; r++) {
+      if (!Number.isFinite(bestCost[i][r])) continue;
+      let bestPrev = -1;
+      let bestVal = Infinity;
+      for (let pr = 0; pr < RANK_COUNT; pr++) {
+        if (!Number.isFinite(dp[pr])) continue;
+        if (Math.abs(pr - r) > RANK_MAX_DIFF) continue;
+        if (dp[pr] < bestVal) {
+          bestVal = dp[pr];
+          bestPrev = pr;
+        }
+      }
+      if (bestPrev >= 0) {
+        ndp[r] = bestVal + bestCost[i][r];
+        prev[i][r] = bestPrev;
+      }
+    }
+    dp = ndp;
+  }
+
+  let endRank = -1;
+  let best = Infinity;
+  for (let r = 0; r < RANK_COUNT; r++) {
+    if (dp[r] < best) {
+      best = dp[r];
+      endRank = r;
+    }
+  }
+  if (endRank < 0) throw new Error('constraint: Viterbi found no valid path');
+
+  const ranks = new Int8Array(D);
+  ranks[D - 1] = endRank;
+  for (let i = D - 1; i > 0; i--) ranks[i - 1] = prev[i][ranks[i]];
+
+  const out = new Int16Array(D);
+  for (let i = 0; i < D; i++) {
+    const sym = bestSym[i][ranks[i]];
+    if (sym < 0) throw new Error('constraint: Viterbi produced an empty rank');
+    out[i] = sym;
+  }
+  return out;
+}

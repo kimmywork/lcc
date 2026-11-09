@@ -70,7 +70,7 @@ function friendlyError(error) {
   if (msg.includes('no contrast')) return '画面没有足够对比度，请对准码面并避免过曝。';
   if (msg.includes('not enough')) return '没有找到 LCC 定位图案，请让码面完整进入画面。';
   if (msg.includes('format band')) return '格式带读取失败，请靠近一点或换一个角度。';
-  if (msg.includes('RS:')) return '纠错失败，可能是模糊、反光或颜色偏移过大。';
+  if (msg.includes('RS:')) return '纠错失败：屏幕反光/高光削顶会破坏多级灰/彩。摄像头场景请改用 L1 黑白 + constraint off，或换角度避开反光。';
   if (msg.includes('constraint')) return '约束解码失败；摄像头场景请生成 constraint off 的码面。';
   return msg;
 }
@@ -149,7 +149,7 @@ async function decodeRGB(image, options = {}) {
   if (!options.silent) setStatus('解码中…', 'busy');
   await new Promise((resolve) => setTimeout(resolve, 20));
   try {
-    const result = decodeAuto(image, { detector: 'auto' });
+    const result = decodeAuto(image, options.detector ? { detector: options.detector } : {});
     const payload = result.payload;
     let text = result.text;
     if (text === null) {
@@ -178,7 +178,7 @@ function scheduleContinuous() {
       const image = captureFrame();
       drawImage(scanCanvas, image);
       setStatus('扫描中…请让码面完整进入画面', 'busy');
-      const ok = await decodeRGB(image, { silent: true });
+      const ok = await decodeRGB(image, { silent: true, detector: 'perspective' });
       if (ok) {
         $('continuous').checked = false;
         return;
@@ -241,6 +241,17 @@ $('download').addEventListener('click', () => {
   }, 'image/png');
 });
 
+document.getElementById('cameraPreset').addEventListener('click', () => {
+  $('layer').value = 'L1';
+  $('palette').value = 'bucketed';
+  $('mode').value = 'fill';
+  $('size').value = '1024';
+  $('constraint').checked = false;
+  if (!textEl.value.trim()) textEl.value = 'https://example.com/lcc';
+  generate();
+  setStatus('已切换到摄像头友好预设：L1 黑白 + constraint off。', '');
+});
+
 document.querySelectorAll('[data-example]').forEach((btn) => {
   btn.addEventListener('click', async () => {
     try {
@@ -282,7 +293,7 @@ $('capture').addEventListener('click', async () => {
   try {
     const image = captureFrame();
     drawImage(scanCanvas, image);
-    await decodeRGB(image);
+    await decodeRGB(image, { detector: 'perspective' });
   } catch (e) {
     setStatus(friendlyError(e), 'err');
   }

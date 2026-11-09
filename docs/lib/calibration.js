@@ -7,8 +7,9 @@
  * L3: 3x4 affine colour correction fitted from the palette calibration
  *     blocks, then CIELAB nearest-neighbour classification.
  *
- * On clean digital images the fit is effectively the identity.  On camera
- * images it absorbs white balance, exposure and mild colour casts.
+ * Each calibrator also exposes a per-symbol cost vector.  The constraint
+ * decoder uses those costs for Viterbi correction, so a few misclassified
+ * modules do not destroy the whole constrained block.
  */
 
 import { clamp, deltaE76, luminance, nearestIndex, rgbToLab } from './color.js';
@@ -54,11 +55,36 @@ function fitChannel(samples, channel) {
   return solveReal(AtA, Aty);
 }
 
+function labDist2(a, b) {
+  const dl = a[0] - b[0];
+  const da = a[1] - b[1];
+  const db = a[2] - b[2];
+  return dl * dl + da * da + db * db;
+}
+
+function argmin(costs) {
+  let best = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < costs.length; i++) {
+    if (costs[i] < bestD) {
+      bestD = costs[i];
+      best = i;
+    }
+  }
+  return best;
+}
+
 export function buildCalibrator({ layerName, layout, paletteInfo, sampler, threshold }) {
   if (layerName === 'L1') {
+    const costs = (rgb) => {
+      const lum = luminance(rgb);
+      const d = lum - threshold;
+      return [Math.max(0, d) ** 2, Math.max(0, -d) ** 2];
+    };
     return {
       type: 'threshold',
-      classify: (rgb) => (luminance(rgb) < threshold ? 0 : 1),
+      costs,
+      classify: (rgb) => argmin(costs(rgb)),
     };
   }
 
@@ -68,22 +94,17 @@ export function buildCalibrator({ layerName, layout, paletteInfo, sampler, thres
       index: b.symbol,
     }));
     samples.sort((a, b) => a.measuredL - b.measuredL);
+    const costs = (rgb) => {
+      const L = rgbToLab(rgb)[0];
+      const out = new Array(16).fill(Infinity);
+      for (const s of samples) out[s.index] = (L - s.measuredL) ** 2;
+      return out;
+    };
     return {
       type: 'gray-rank',
       samples,
-      classify: (rgb) => {
-        const L = rgbToLab(rgb)[0];
-        let best = 0;
-        let bestD = Infinity;
-        for (const s of samples) {
-          const d = Math.abs(L - s.measuredL);
-          if (d < bestD) {
-            bestD = d;
-            best = s.index;
-          }
-        }
-        return best;
-      },
+      costs,
+      classify: (rgb) => argmin(costs(rgb)),
     };
   }
 
@@ -100,39 +121,44 @@ export function buildCalibrator({ layerName, layout, paletteInfo, sampler, thres
     ? samples.reduce((s, x) => s + x.dE, 0) / samples.length
     : 0;
 
-  // A clean digital image reproduces the palette exactly.  In that case the
-  // identity classifier is both simpler and safer than a fitted matrix.
-  if (avgDE < 2.5) {
-    return {
-      type: 'identity-clean',
-      matrix: [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]],
-      samples: samples.length,
-      avgDE,
-      classify: (rgb) => nearestIndex(rgbToLab(rgb), paletteInfo.paletteLab),
-    };
+  const identity = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]];
+  let matrix = identity;
+  let type = 'identity-clean';
+
+  if (avgDE >= 2.5) {
+    const M = [0, 1, 2].map((ch) => fitChannel(samples, ch));
+    if (M.every((row) => Array.isArray(row))) {
+      matrix = M;
+      type = 'affine';
+    } else {
+      type = 'identity';
+    }
   }
 
-  const M = [0, 1, 2].map((ch) => fitChannel(samples, ch));
-  const valid = M.every((row) => Array.isArray(row));
-  const identity = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]];
-  const matrix = valid ? M : identity;
+  const correctLab = (rgb) => {
+    const out = [0, 0, 0];
+    for (let ch = 0; ch < 3; ch++) {
+      const row = matrix[ch];
+      out[ch] = clamp(
+        Math.round(row[0] * rgb[0] + row[1] * rgb[1] + row[2] * rgb[2] + row[3]),
+        0,
+        255,
+      );
+    }
+    return rgbToLab(out);
+  };
+
+  const costs = (rgb) => {
+    const lab = correctLab(rgb);
+    return paletteInfo.paletteLab.map((p) => labDist2(lab, p));
+  };
 
   return {
-    type: valid ? 'affine' : 'identity',
+    type,
     matrix,
     samples: samples.length,
     avgDE,
-    classify: (rgb) => {
-      const out = [0, 0, 0];
-      for (let ch = 0; ch < 3; ch++) {
-        const row = matrix[ch];
-        out[ch] = clamp(
-          Math.round(row[0] * rgb[0] + row[1] * rgb[1] + row[2] * rgb[2] + row[3]),
-          0,
-          255,
-        );
-      }
-      return nearestIndex(rgbToLab(out), paletteInfo.paletteLab);
-    },
+    costs,
+    classify: (rgb) => argmin(costs(rgb)),
   };
 }

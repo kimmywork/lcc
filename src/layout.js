@@ -15,7 +15,9 @@
  * Data modules use a Hilbert curve order filtered to the data cells.
  */
 
+import { deltaE76 } from './color.js';
 import { LAYERS, versionToSize } from './constants.js';
+import { generatePalette } from './palettes.js';
 
 export const BLACK = 0;
 export const WHITE = 15;
@@ -67,39 +69,47 @@ export function calibrationSampleCount(layerName, N) {
   throw new Error(`Unknown layer: ${layerName}`);
 }
 
-export function calibrationSampleIndices(layerName, N) {
+export function calibrationSampleIndices(layerName, N, paletteInfo = null) {
   const layer = LAYERS[layerName];
   const count = calibrationSampleCount(layerName, N);
   if (count === 0) return [];
-  if (count >= layer.paletteSize) {
-    return Array.from({ length: layer.paletteSize }, (_, i) => i);
+  const palette = paletteInfo?.paletteLab ?? null;
+  if (!palette || palette.length === 0) {
+    return Array.from({ length: Math.min(count, layer.paletteSize) }, (_, i) => i);
   }
-  const out = [];
-  const seen = new Set();
-  for (let i = 0; i < 16; i++) {
-    out.push(i);
-    seen.add(i);
-  }
-  const remaining = count - 16;
-  if (remaining > 0) {
-    for (let i = 0; i < remaining; i++) {
-      const idx = 16 + Math.round((i * (layer.paletteSize - 17)) / Math.max(1, remaining - 1));
-      if (!seen.has(idx)) {
-        out.push(idx);
-        seen.add(idx);
+  if (count >= palette.length) return Array.from({ length: palette.length }, (_, i) => i);
+
+  // Farthest-point sampling in CIELAB.  Small versions have only a 4x4
+  // palette block; selecting the 16 grays would leave the colour axes
+  // completely uncalibrated.  Starting with black/white and then picking the
+  // most distant colour gives usable chroma information in the same area.
+  const selected = [];
+  const used = new Uint8Array(palette.length);
+  const pick = (idx) => {
+    selected.push(idx);
+    used[idx] = 1;
+  };
+  pick(0);
+  if (palette.length > 15) pick(15);
+  while (selected.length < count) {
+    let best = -1;
+    let bestD = -1;
+    for (let i = 0; i < palette.length; i++) {
+      if (used[i]) continue;
+      let minD = Infinity;
+      for (const s of selected) {
+        const d = deltaE76(palette[i], palette[s]);
+        if (d < minD) minD = d;
+      }
+      if (minD > bestD) {
+        bestD = minD;
+        best = i;
       }
     }
+    if (best < 0) break;
+    pick(best);
   }
-  // If rounding produced duplicates, fill deterministically.
-  let k = 16;
-  while (out.length < count) {
-    if (!seen.has(k)) {
-      out.push(k);
-      seen.add(k);
-    }
-    k++;
-  }
-  return out.slice(0, count);
+  return selected;
 }
 
 function finderCell(r, c) {
@@ -108,9 +118,10 @@ function finderCell(r, c) {
   return WHITE;
 }
 
-export function makeLayout({ version, layer: layerName, paletteMode = 'bucketed' }) {
+export function makeLayout({ version, layer: layerName, paletteMode = 'bucketed', harmony = false, paletteInfo = null }) {
   const layer = LAYERS[layerName];
   if (!layer) throw new Error(`Unknown layer: ${layerName}`);
+  const palette = paletteInfo ?? generatePalette(layerName, { mode: paletteMode, harmony });
   const N = versionToSize(version);
   const blackSym = 0;
   const whiteSym = layerName === 'L1' ? 1 : 15;
@@ -157,7 +168,7 @@ export function makeLayout({ version, layer: layerName, paletteMode = 'bucketed'
   const formatCopies = [];
   let alignment = null;
 
-  if (N >= 33) {
+  if (N >= 25) {
     // 5x5 alignment ring at the bottom-right corner, with a 1-module white
     // border.  Its centre is the fourth homography point for camera photos.
     const base = N - 7;
@@ -226,7 +237,7 @@ export function makeLayout({ version, layer: layerName, paletteMode = 'bucketed'
 
     // Palette samples.
     if (paletteSide > 0) {
-      const indices = calibrationSampleIndices(layerName, N);
+      const indices = calibrationSampleIndices(layerName, N, palette);
       for (let i = 0; i < indices.length; i++) {
         const r = hubRow + 1 + Math.floor(i / paletteSide);
         const c = hubCol + 1 + graySide + (i % paletteSide);

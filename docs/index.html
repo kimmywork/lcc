@@ -19,7 +19,7 @@
       </div>
       <p class="hero-note">
         L1/L2/L3a/L3b 共用同一套方形几何；可逆亮度约束、真 RS 纠错、BCH 格式带。
-        摄像头模式建议使用 <code>constraint: off</code> 的码面。
+        摄像头/屏幕反光场景建议使用 <code>L1 黑白</code> + <code>constraint: off</code>；多级灰/彩在强反光下会丢灰阶。
       </p>
     </div>
   </header>
@@ -40,6 +40,7 @@
         <span class="muted">示例：</span>
         <button class="ghost small" data-example="心经.txt">心经</button>
         <button class="ghost small" data-example="金刚经.txt">金刚经</button>
+        <button class="ghost small" id="cameraPreset">摄像头友好</button>
       </div>
 
       <div class="grid-controls">
@@ -77,7 +78,7 @@
       </div>
 
       <label class="check">
-        <input type="checkbox" id="constraint" checked />
+        <input type="checkbox" id="constraint" />
         <span>启用可逆邻差约束（清洁数字码推荐；摄像头/强色偏场景建议关闭）</span>
       </label>
 

@@ -95,7 +95,16 @@ Web 版在 `docs/`：
 
 部署到 GitHub Pages：仓库 Settings → Pages → Source 选择 `Deploy from a branch`，目录选 `/docs`。
 
-摄像头需要 HTTPS 或 localhost。摄像头模式建议使用 **L3b + 2048² + constraint off**。
+摄像头需要 HTTPS 或 localhost。
+
+### 摄像头/拍照建议
+
+- **首选 L1 黑白 + constraint off**：二值层对屏幕摩尔纹、反光、亮度梯度最稳，和 QR 的鲁棒性同级。
+- L2/L3 用于清洁截图、文件或受控拍摄；摄像头场景请关闭 constraint，并避免屏幕高光/反光。
+- 多级灰/彩在强反光/高光削顶时会丢灰阶/色阶，这是多级码的固有限制，不是 finder 检测问题。
+- Web 编码面板的“摄像头友好”按钮会切到 L1 + constraint off。
+
+解码器已加入 QR 式预处理：Otsu / Bradley 局部自适应阈值、形态学闭运算、多假设重试、finder 径向环检测、四锚点单应、定时图案消歧、局部光照归一化、L2 局部 rank 和 Viterbi 约束修正。
 
 ## 示例
 
@@ -116,6 +125,9 @@ src/
   encoder.js         编码管线
   decoder.js         轴对齐 + 自动解码
   detector.js        透视检测 / 单应
+  preprocess.js      Otsu / 自适应阈值 / 闭运算 / 多假设
+  illumination.js    finder/alignment 黑白云模型
+  local-rank.js      L2 局部 rank 分类
   calibration.js     L1/L2/L3 校准
   layout.js          finder / 对齐 / 格式带 / 枢纽 / Hilbert
   palettes.js        bucketed / global 色板
@@ -131,7 +143,7 @@ scripts/             build:web / 本地静态服务
 
 ## 已知限制
 
-- 约束码在强色偏/噪声下脆弱；摄像头模式默认关闭约束。
+- 多级灰/彩在强反光/高光削顶下仍可能失败；摄像头首选 L1 黑白 + constraint off。
 - File Mode（24bit 真彩数字承载）尚未实现。
 - 多帧/喷泉码尚未实现。
 - 打印链路未实测；L3a 是近似 CMYK 色域。
