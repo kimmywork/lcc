@@ -18,8 +18,8 @@
         </div>
       </div>
       <p class="hero-note">
-        L1/L2/L3a/L3b 共用同一套方形几何；可逆亮度约束、真 RS 纠错、BCH 格式带。
-        摄像头/屏幕反光场景建议使用 <code>L1 黑白</code> + <code>constraint: off</code>；多级灰/彩在强反光下会丢灰阶。
+        L1 / L2a / L2b / L3c / L3d / L4e / L4f 共用同一套方形几何；可逆亮度约束、真 RS 纠错、BCH 格式带。
+        摄像头/屏幕反光场景建议使用 <code>L1 / L2a / L3c</code> + <code>constraint: off</code>。
       </p>
     </div>
   </header>
@@ -90,14 +90,66 @@
         <span>启用可逆邻差约束（清洁数字码推荐；摄像头/强色偏场景建议关闭）</span>
       </label>
 
+      <details class="advanced">
+        <summary>高级设置</summary>
+        <div class="grid-controls">
+          <label class="field">
+            <span>ECC</span>
+            <select id="ecc">
+              <option value="auto" selected>Auto（层默认）</option>
+              <option value="L">L · 20%</option>
+              <option value="M">M · 30%</option>
+              <option value="Q">Q · 35%</option>
+              <option value="H">H · 40%</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>版本范围</span>
+            <div class="range">
+              <input id="minVersion" type="number" min="1" max="100" value="1" />
+              <span>–</span>
+              <input id="maxVersion" type="number" min="1" max="100" value="100" />
+            </div>
+          </label>
+          <label class="field">
+            <span>模块尺寸</span>
+            <select id="moduleSize">
+              <option value="auto" selected>Auto</option>
+              <option value="4">4px</option>
+              <option value="6">6px</option>
+              <option value="8">8px</option>
+              <option value="12">12px</option>
+              <option value="16">16px</option>
+              <option value="24">24px</option>
+              <option value="32">32px</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>静区</span>
+            <select id="quietZone">
+              <option value="auto" selected>Auto</option>
+              <option value="2">2 模块</option>
+              <option value="4">4 模块</option>
+              <option value="6">6 模块</option>
+            </select>
+          </label>
+        </div>
+        <label class="check">
+          <input type="checkbox" id="boostEcc" checked />
+          <span>Boost ECC（同版本内提高纠错）</span>
+        </label>
+      </details>
+
       <div class="actions">
         <button id="generate" class="primary">生成</button>
         <button id="download" class="secondary" disabled>下载 PNG</button>
+        <button id="downloadSvg" class="secondary" disabled>下载 SVG</button>
       </div>
 
       <div class="preview-wrap">
         <canvas id="encodeCanvas" class="preview" width="512" height="512"></canvas>
       </div>
+      <div id="encodeStats" class="stats"></div>
       <div id="encodeMeta" class="meta"></div>
     </section>
 
@@ -144,6 +196,7 @@
           <button id="copy" class="ghost small">复制</button>
         </div>
         <pre id="scanText"></pre>
+        <div id="scanStats" class="stats"></div>
         <div id="scanMeta" class="meta"></div>
       </div>
     </section>

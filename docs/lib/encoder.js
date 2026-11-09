@@ -3,16 +3,21 @@
  *
  * payload -> frame -> whitening -> RS -> interleaving -> constrained symbol
  * mapping -> layout -> render.
+ *
+ * ECC can be selected as auto/L/M/Q/H; Boost ECC tries the highest level that
+ * still fits the payload at the chosen symbol size.
  */
 
 import { BitReader } from './bitstream.js';
 import {
+  ECC_BY_NAME,
   ECC_LEVELS,
   FRAME_HEADER_SIZE,
   LAYERS,
   MAX_MODULE_PX,
   MIN_MODULE_PX,
   QUIET_ZONE,
+  eccNameOf,
 } from './constants.js';
 import { RankConstraint } from './constraint.js';
 import { computeRSBlocks, rsEncodeBlocks } from './ecc/rs.js';
@@ -22,7 +27,23 @@ import { makeLayout } from './layout.js';
 import { generatePalette } from './palettes.js';
 import { makeWhitening } from './whitening.js';
 
-export function capacityFor(layout, layerName, paletteInfo, constraint) {
+function resolveEcc(option, layer) {
+  if (option === undefined || option === null || option === 'auto') return layer.ecc;
+  if (typeof option === 'string') {
+    const value = ECC_BY_NAME.get(option.toUpperCase());
+    if (value === undefined) throw new Error('LCC: eccLevel must be auto/L/M/Q/H');
+    return value;
+  }
+  if (typeof option === 'number' && ECC_LEVELS.includes(option)) return option;
+  throw new Error('LCC: eccLevel must be auto/L/M/Q/H');
+}
+
+function eccCandidates(baseEcc, boostEcc) {
+  if (!boostEcc) return [baseEcc];
+  return ECC_LEVELS.filter((e) => e >= baseEcc).sort((a, b) => b - a);
+}
+
+function baseCapacityFor(layout, layerName, paletteInfo, constraint) {
   const layer = LAYERS[layerName];
   const D = layout.dataCount;
   let capacityBits;
@@ -35,20 +56,38 @@ export function capacityFor(layout, layerName, paletteInfo, constraint) {
   } else {
     capacityBits = D * layer.bitsPerModule;
   }
+  return { D, capacityBits, rankConstraint };
+}
+
+function payloadForEcc(capacityBits, ecc) {
   const S = Math.floor(capacityBits / 8);
-  if (S <= 0) {
-    return { D, capacityBits, rankConstraint, S, kTotal: 0, payloadCapacity: -1 };
-  }
-  const blocks = computeRSBlocks(S, layer.ecc);
+  if (S <= 0) return { S: 0, kTotal: 0, payloadCapacity: -1 };
+  const blocks = computeRSBlocks(S, ecc);
   const kTotal = blocks.reduce((s, b) => s + b.k, 0);
-  return {
-    D,
-    capacityBits,
-    rankConstraint,
-    S,
-    kTotal,
-    payloadCapacity: kTotal - FRAME_HEADER_SIZE,
-  };
+  return { S, kTotal, payloadCapacity: kTotal - FRAME_HEADER_SIZE };
+}
+
+export function capacityFor(
+  layout,
+  layerName,
+  paletteInfo,
+  constraint,
+  ecc = LAYERS[layerName].ecc,
+) {
+  const base = baseCapacityFor(layout, layerName, paletteInfo, constraint);
+  const payload = payloadForEcc(base.capacityBits, ecc);
+  return { ...base, ...payload, ecc };
+}
+
+function pickCap(layout, layerName, paletteInfo, constraint, payloadSize, baseEcc, boostEcc) {
+  const base = baseCapacityFor(layout, layerName, paletteInfo, constraint);
+  for (const ecc of eccCandidates(baseEcc, boostEcc)) {
+    const payload = payloadForEcc(base.capacityBits, ecc);
+    if (payload.payloadCapacity >= payloadSize) {
+      return { cap: { ...base, ...payload, ecc }, ecc };
+    }
+  }
+  return null;
 }
 
 export function chooseVersionAndScale({
@@ -64,6 +103,10 @@ export function chooseVersionAndScale({
   maxModulePx,
   quietZone,
   minVersion = 1,
+  maxVersion = 100,
+  baseEcc = LAYERS[layerName].ecc,
+  boostEcc = false,
+  moduleSize = null,
 }) {
   const minSide = Math.min(width, height);
   const layoutFor = (version) => makeLayout({
@@ -73,30 +116,62 @@ export function chooseVersionAndScale({
     harmony,
     paletteInfo,
   });
+  const tryVersion = (version, s) => {
+    const layout = layoutFor(version);
+    const picked = pickCap(layout, layerName, paletteInfo, constraint, payloadSize, baseEcc, boostEcc);
+    if (!picked) return null;
+    return { version, layout, cap: picked.cap, moduleSize: s, ecc: picked.ecc };
+  };
 
   if (mode === 'compact') {
-    for (let version = minVersion; version <= 100; version++) {
+    if (moduleSize) {
+      const s = Math.max(minModulePx, Math.min(maxModulePx, moduleSize));
+      const nMax = Math.floor(minSide / s) - 2 * quietZone;
+      if (nMax < 21) throw new Error('LCC: module size is too large for the canvas');
+      const vMax = Math.min(maxVersion, Math.floor((nMax - 21) / 4) + 1);
+      if (vMax < minVersion) throw new Error('LCC: version range does not fit the canvas');
+      for (let version = minVersion; version <= vMax; version++) {
+        const chosen = tryVersion(version, s);
+        if (chosen) return chosen;
+      }
+      throw new Error('LCC: payload does not fit in the requested canvas');
+    }
+    for (let version = minVersion; version <= maxVersion; version++) {
       const layout = layoutFor(version);
-      const cap = capacityFor(layout, layerName, paletteInfo, constraint);
-      if (cap.payloadCapacity >= payloadSize) {
+      const picked = pickCap(layout, layerName, paletteInfo, constraint, payloadSize, baseEcc, boostEcc);
+      if (picked) {
         const s = Math.floor(minSide / (layout.N + 2 * quietZone));
         if (s < minModulePx) break;
-        return { version, layout, cap, moduleSize: Math.min(s, maxModulePx) };
+        return {
+          version,
+          layout,
+          cap: picked.cap,
+          moduleSize: Math.min(s, maxModulePx),
+          ecc: picked.ecc,
+        };
       }
     }
     throw new Error('LCC: payload does not fit in the requested canvas');
   }
 
+  if (moduleSize) {
+    const s = Math.max(minModulePx, Math.min(maxModulePx, moduleSize));
+    const nMax = Math.floor(minSide / s) - 2 * quietZone;
+    if (nMax < 21) throw new Error('LCC: module size is too large for the canvas');
+    const version = Math.min(maxVersion, Math.floor((nMax - 21) / 4) + 1);
+    if (version < minVersion) throw new Error('LCC: version range does not fit the canvas');
+    const chosen = tryVersion(version, s);
+    if (chosen) return chosen;
+    throw new Error('LCC: payload does not fit at this module size');
+  }
+
   for (let s = maxModulePx; s >= minModulePx; s--) {
     const nMax = Math.floor(minSide / s) - 2 * quietZone;
     if (nMax < 21) continue;
-    const version = Math.min(100, Math.floor((nMax - 21) / 4) + 1);
+    const version = Math.min(maxVersion, Math.floor((nMax - 21) / 4) + 1);
     if (version < minVersion) continue;
-    const layout = layoutFor(version);
-    const cap = capacityFor(layout, layerName, paletteInfo, constraint);
-    if (cap.payloadCapacity >= payloadSize) {
-      return { version, layout, cap, moduleSize: s };
-    }
+    const chosen = tryVersion(version, s);
+    if (chosen) return chosen;
   }
   throw new Error('LCC: payload does not fit even at the minimum module size');
 }
@@ -153,6 +228,9 @@ export function encode(payload, options = {}) {
   const quietZone = options.quietZone ?? QUIET_ZONE.screen;
   const minModulePx = options.minModulePx ?? MIN_MODULE_PX;
   const maxModulePx = options.maxModulePx ?? MAX_MODULE_PX;
+  const baseEcc = resolveEcc(options.eccLevel, layer);
+  const boostEcc = options.boostEcc ?? false;
+  const moduleSize = options.moduleSize ?? null;
 
   const payloadBytes = typeof payload === 'string'
     ? new TextEncoder().encode(payload)
@@ -161,19 +239,24 @@ export function encode(payload, options = {}) {
   let paletteInfo = generatePalette(layerName, { mode: paletteMode, harmony });
   const richFormat = layer.kind === 'color' || constraint || (options.seed ?? 0) !== 0
     || paletteMode !== 'maxmin' || harmony;
-  const minVersion = richFormat ? 2 : 1;
+  const minVersion = Math.max(options.minVersion ?? 1, richFormat ? 2 : 1);
+  const maxVersion = options.maxVersion ?? 100;
+  if (minVersion < 1 || maxVersion > 100 || maxVersion < minVersion) {
+    throw new Error('LCC: invalid version range');
+  }
 
   let chosen;
   if (options.version) {
     const version = options.version;
-    if (version < minVersion) {
-      throw new Error('LCC: this layer/options require version >= 2 (N >= 25)');
+    if (version < minVersion || version > maxVersion) {
+      throw new Error(`LCC: version must be between ${minVersion} and ${maxVersion}`);
     }
     const layout = makeLayout({ version, layer: layerName, paletteMode, harmony, paletteInfo });
-    const cap = capacityFor(layout, layerName, paletteInfo, constraint);
-    let s = options.moduleSize ?? Math.floor(Math.min(width, height) / (layout.N + 2 * quietZone));
+    const picked = pickCap(layout, layerName, paletteInfo, constraint, payloadBytes.length, baseEcc, boostEcc);
+    if (!picked) throw new Error('LCC: payload does not fit at this version');
+    let s = moduleSize ?? Math.floor(Math.min(width, height) / (layout.N + 2 * quietZone));
     s = Math.max(minModulePx, Math.min(s, maxModulePx));
-    chosen = { version, layout, cap, moduleSize: s };
+    chosen = { version, layout, cap: picked.cap, moduleSize: s, ecc: picked.ecc };
   } else {
     chosen = chooseVersionAndScale({
       payloadSize: payloadBytes.length,
@@ -188,10 +271,14 @@ export function encode(payload, options = {}) {
       maxModulePx,
       quietZone,
       minVersion,
+      maxVersion,
+      baseEcc,
+      boostEcc,
+      moduleSize,
     });
   }
 
-  const { version, layout, cap, moduleSize } = chosen;
+  const { version, layout, cap, moduleSize: chosenModuleSize, ecc } = chosen;
   const formatBlocks = layout.format.blocksPerCopy;
 
   let seed = options.seed ?? 0;
@@ -213,7 +300,7 @@ export function encode(payload, options = {}) {
   const padded = new Uint8Array(cap.kTotal);
   padded.set(frame, 0);
   const whitened = makeWhitening(seed)(padded);
-  const rsBytes = rsEncodeBlocks(whitened, cap.S, layer.ecc);
+  const rsBytes = rsEncodeBlocks(whitened, cap.S, ecc);
 
   const bitLength = cap.capacityBits;
   const bitBytes = new Uint8Array(Math.ceil(bitLength / 8));
@@ -239,7 +326,7 @@ export function encode(payload, options = {}) {
     symbols[r * layout.N + c] = dataSymbols[i];
   }
 
-  const eccIndex = ECC_LEVELS.indexOf(layer.ecc);
+  const eccIndex = ECC_LEVELS.indexOf(ecc);
   const chunks = packFormatPayload({
     formatBlocks,
     modeId: layer.id,
@@ -253,7 +340,7 @@ export function encode(payload, options = {}) {
   });
   writeFormatBand(symbols, layout, chunks);
 
-  const image = render(symbols, layout, paletteInfo.palette, moduleSize, quietZone);
+  const image = render(symbols, layout, paletteInfo.palette, chosenModuleSize, quietZone);
 
   const actualBitsPerModule = layerName === 'L1'
     ? 1
@@ -270,13 +357,18 @@ export function encode(payload, options = {}) {
       layer: layerName,
       version,
       N: layout.N,
-      moduleSize,
+      moduleSize: chosenModuleSize,
       quietZone,
       paletteMode,
       harmony,
+      paletteSize: layer.paletteSize,
+      minDeltaE: paletteInfo.minDeltaE,
       constraint,
+      constraintRankCount: paletteInfo.rankCount,
+      constraintMaxDiff: paletteInfo.maxRankDiff,
       seed,
-      ecc: layer.ecc,
+      ecc,
+      eccLevel: eccNameOf(ecc),
       dataCount: cap.D,
       functionCount: layout.functionCount,
       capacityBits: cap.capacityBits,

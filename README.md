@@ -59,11 +59,11 @@ npm run qr:examples
 
 | 文本 | 大小 | LCC | QRCode | 说明 |
 | --- | ---: | --- | --- | --- |
-| **Hello World!** | 12 B | <img src="demo_outputs/hello_world_L1.png" width="170"><br>L1 · v2 / N=25 · 17px | <img src="demo_outputs/qr_hello_world.png" width="170"><br>QR v1 · 21×21 | 最小黑白码 |
-| **The quick brown fox jumps over the lazy dog.** | 44 B | <img src="demo_outputs/quick_brown_fox_L2a.png" width="170"><br>L2a · v2 / N=25 · 17px | <img src="demo_outputs/qr_quick_brown_fox.png" width="170"><br>QR v4 · 33×33 | 4 级灰，摄像头友好 |
-| **Lorem ipsum**（完整段落） | 446 B | <img src="demo_outputs/lorem_ipsum_L3c.png" width="170"><br>L3c · v7 / N=45 · 20px | <img src="demo_outputs/qr_lorem_ipsum.png" width="170"><br>QR v16 · 81×81 | 16 色，min ΔE ≈ 49 |
-| **心经** | 944 B | <img src="demo_outputs/heart_sutra_L3d.png" width="170"><br>L3d · v10 / N=57 · 16px | <img src="demo_outputs/qr_heart_sutra.png" width="170"><br>QR v25 · 117×117 | 32 色，受控拍摄 |
-| **金刚经** | 20406 B | <img src="demo_outputs/diamond_sutra_L4f.png" width="170"><br>L4f · v45 / N=197 · 10px | 不展示（20 KB，QR 会非常密） | 256 色，清洁/数字/打印 |
+| **Hello World!** | 12 B | <img src="demo_outputs/hello_world_L1.png" width="170"><br>L1 · v2 / N=25 · 17px · ECC L | <img src="demo_outputs/qr_hello_world.png" width="170"><br>QR v1 · 21×21 | 最小黑白码 |
+| **The quick brown fox jumps over the lazy dog.** | 44 B | <img src="demo_outputs/quick_brown_fox_L2a.png" width="170"><br>L2a · v2 / N=25 · 17px · ECC L | <img src="demo_outputs/qr_quick_brown_fox.png" width="170"><br>QR v4 · 33×33 | 4 级灰，摄像头友好 |
+| **Lorem ipsum**（完整段落） | 446 B | <img src="demo_outputs/lorem_ipsum_L3c.png" width="170"><br>L3c · v7 / N=45 · 20px · ECC Q | <img src="demo_outputs/qr_lorem_ipsum.png" width="170"><br>QR v16 · 81×81 | 16 色，min ΔE ≈ 49 |
+| **心经** | 944 B | <img src="demo_outputs/heart_sutra_L3d.png" width="170"><br>L3d · v10 / N=57 · 16px · ECC H | <img src="demo_outputs/qr_heart_sutra.png" width="170"><br>QR v25 · 117×117 | 32 色，受控拍摄 |
+| **金刚经** | 20406 B | <img src="demo_outputs/diamond_sutra_L4f.png" width="170"><br>L4f · v45 / N=197 · 10px · ECC H | 不展示（20 KB，QR 会非常密） | 256 色，清洁/数字/打印 |
 
 ## LCC vs QRCode
 
@@ -73,7 +73,8 @@ npm run qr:examples
 | 颜色 | L3c/L3d/L4e/L4f 彩色 | 单色 |
 | 定位图案 | `1:2:1:2:1` 自定义方环 | `1:1:3:1:1` |
 | 校准 | 灰阶/色板校准枢纽 | 无（二值阈值） |
-| 纠错 | RS(GF256) + BCH 格式带 + CRC32 | RS + 格式信息 |
+| 纠错 | RS(GF256) + BCH 格式带 + CRC32；L/M/Q/H + Boost | RS + 格式信息；L/M/Q/H |
+| 输出 | PNG / SVG | Bitmap / Vector |
 | 容量 | 彩色层更高；L4f 可放 20 KB 文本 | 单色，容量较低 |
 | 摄像头 | L1/L2a/L3c 可用；多级受反光/削顶影响 | 极成熟，全球通用 |
 | 生态 | 测试阶段，无通用扫描器 | ISO/IEC 18004，所有手机支持 |
@@ -87,6 +88,9 @@ npm run qr:examples
 - **自定义定位图案**：`1:2:1:2:1` 同心方环，和 QR 的 `1:1:3:1:1` 明显区分。
 - **BR 对齐图案**：`N≥25` 提供第四个单应锚点。
 - **真 RS(GF(256))**：系统码、分块、交织、Berlekamp-Massey 解码。
+- **ECC 可选**：L/M/Q/H（20/30/35/40%）+ Boost ECC；同版本内自动提高纠错。
+- **高级尺寸控制**：版本范围、静区、模块尺寸可覆盖。
+- **SVG / 统计**：矢量输出 + 结构化统计面板。
 - **BCH(15,5) 格式带**：双副本多数投票，版本由几何推导。
 - **可逆邻差约束**：按层的 rank 数（4/8/16）和 `maxDiff` 参数化。
 - **max-min ΔE 色板**：16/32/64/256 色，最小 ΔE 可测。
@@ -124,6 +128,32 @@ const decoded = decodeAuto({
 console.log(decoded.text);
 ```
 
+## ECC 与高级选项
+
+| 选项 | 取值 | 说明 |
+| --- | --- | --- |
+| ECC | `auto` / `L` / `M` / `Q` / `H` | 20% / 30% / 35% / 40% |
+| Boost ECC | on / off | 同一版本内选能放下的最高 ECC |
+| 版本范围 | 1–100 | 限制自动选档；`version` 可强制指定 |
+| 模块尺寸 | Auto / 4–32px | 固定每模块像素；Auto 由 fill/compact 决定 |
+| 静区 | Auto / 2 / 4 / 6 | 屏幕默认 2，打印/摄像头建议 4 |
+| 输出 | PNG / SVG | SVG 适合打印和排版 |
+
+```js
+const result = encode('Hello', {
+  layer: 'L3c',
+  eccLevel: 'Q',       // auto/L/M/Q/H
+  boostEcc: true,      // 同版本内尽量提高
+  minVersion: 1,
+  maxVersion: 100,
+  moduleSize: undefined, // 或 4/6/8/...
+  quietZone: 4,
+});
+```
+
+Web 编码面板的“高级设置”里可以直接调这些参数；生成后统计面板会显示 ECC、色板 min ΔE、约束 rank、数据/功能模块、容量等。  
+“下载 SVG”输出矢量码面。
+
 ## Web 版 / GitHub Pages
 
 Web 版在 `docs/`：
@@ -134,6 +164,8 @@ Web 版在 `docs/`：
 - `docs/lcc-spec.md`：规范。
 
 部署到 GitHub Pages：Settings → Pages → Source 选 `Deploy from a branch`，目录选 `/docs`。
+
+编码面板包含“高级设置”（ECC、Boost ECC、版本范围、模块尺寸、静区）、统计面板和 PNG/SVG 下载。
 
 摄像头需要 HTTPS 或 localhost。编码面板有：
 

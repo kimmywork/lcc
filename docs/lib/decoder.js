@@ -9,7 +9,7 @@
 import { BitWriter } from './bitstream.js';
 import { buildCalibrator } from './calibration.js';
 import { nearestIndex, rgbToLab } from './color.js';
-import { ECC_LEVELS, LAYERS, LAYER_BY_ID, sizeToVersion, versionToSize } from './constants.js';
+import { ECC_LEVELS, LAYERS, LAYER_BY_ID, eccNameOf, sizeToVersion, versionToSize } from './constants.js';
 import { RankConstraint, viterbiCorrect } from './constraint.js';
 import { detectPerspective } from './detector.js';
 import { rsDecodeBlocks } from './ecc/rs.js';
@@ -271,7 +271,16 @@ export function decode(image, options = {}) {
     symbolsCal[i] = calibrator.classify(rgb);
   }
 
-  const errorMeta = { layer: layerName, version, N: layout.N, paletteMode, constraint, seed };
+  const errorMeta = {
+    layer: layerName,
+    version,
+    N: layout.N,
+    paletteMode,
+    constraint,
+    seed,
+    ecc: ECC_LEVELS[fmt.eccIndex] ?? LAYERS[layerName].ecc,
+    eccLevel: eccNameOf(ECC_LEVELS[fmt.eccIndex] ?? LAYERS[layerName].ecc),
+  };
 
   const attempt = (symbols, costs, calibrationType) => {
     let writer;
@@ -336,8 +345,19 @@ export function decode(image, options = {}) {
         constraint,
         seed,
         ecc,
+        eccLevel: eccNameOf(ecc),
+        paletteSize: paletteInfo.palette.length,
+        minDeltaE: paletteInfo.minDeltaE,
+        constraintRankCount: paletteInfo.rankCount,
+        constraintMaxDiff: paletteInfo.maxRankDiff,
         dataCount: layout.dataCount,
         capacityBits,
+        bitsPerModule: layerName === 'L1'
+          ? 1
+          : constraint
+            ? capacityBits / layout.dataCount
+            : LAYERS[layerName].bitsPerModule,
+        formatBlocks: layout.format.blocksPerCopy,
         rsSymbols: S,
         correctedSymbols: rs.corrected,
         calibration: calibrationType,

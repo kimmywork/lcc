@@ -11,8 +11,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { decodeAuto } from './decoder.js';
 import { encode } from './encoder.js';
-import { LAYERS } from './constants.js';
+import { ECC_LEVELS, ECC_NAMES, LAYERS } from './constants.js';
 import { decodePNG, encodePNG } from './png.js';
+import { renderSVG } from './svg.js';
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -52,6 +53,14 @@ Usage:
     --size <px>            canvas side, default 1024
     --mode <fill|compact>  default fill
     --palette <maxmin|harmony>  default maxmin
+    --ecc <auto|L|M|Q|H>   error correction level, default auto
+    --boost-ecc            use the highest ECC that fits (same version)
+    --no-boost-ecc         disable boost (default)
+    --min-version <1..100> minimum version, default 1
+    --max-version <1..100> maximum version, default 100
+    --module-size <px>     fixed module size
+    --quiet-zone <n>       quiet zone in modules
+    --format <png|svg>     output format (default from extension)
     --constraint           enable reversible constraint (default on for L2/L3)
     --no-constraint        disable constraint (recommended for camera)
     --seed <0..63>         whitening seed, default 0
@@ -71,6 +80,7 @@ function cmdEncode(args) {
   if (!LAYERS[layer]) throw new Error(`unknown layer: ${layer}`);
   const size = Number(args.size ?? 1024);
   const constraint = args.constraint === false ? false : args.constraint === true ? true : undefined;
+  const format = args.format ?? (String(args.output).toLowerCase().endsWith('.svg') ? 'svg' : 'png');
   const result = encode(payload, {
     layer,
     width: size,
@@ -80,10 +90,27 @@ function cmdEncode(args) {
     constraint,
     seed: Number(args.seed ?? 0),
     maxModulePx: 32,
+    eccLevel: args.ecc ?? 'auto',
+    boostEcc: args['boost-ecc'] === true,
+    minVersion: args['min-version'] ? Number(args['min-version']) : undefined,
+    maxVersion: args['max-version'] ? Number(args['max-version']) : undefined,
+    moduleSize: args['module-size'] ? Number(args['module-size']) : undefined,
+    quietZone: args['quiet-zone'] ? Number(args['quiet-zone']) : undefined,
   });
   fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
-  fs.writeFileSync(args.output, encodePNG(result.image));
-  console.log(JSON.stringify({ output: args.output, ...result.meta }, null, 2));
+  if (format === 'svg') {
+    const svg = renderSVG({
+      symbols: result.symbols,
+      layout: result.layout,
+      palette: result.paletteInfo.palette,
+      moduleSize: result.meta.moduleSize,
+      quietZone: result.meta.quietZone,
+    });
+    fs.writeFileSync(args.output, svg);
+  } else {
+    fs.writeFileSync(args.output, encodePNG(result.image));
+  }
+  console.log(JSON.stringify({ output: args.output, format, ...result.meta }, null, 2));
 }
 
 function cmdDecode(args) {
@@ -108,7 +135,8 @@ function cmdDecode(args) {
 
 function cmdInfo() {
   for (const layer of Object.values(LAYERS)) {
-    console.log(`${layer.name}: ${layer.paletteSize} symbols, ${layer.bitsPerModule} bit/module, ECC ${(layer.ecc * 100).toFixed(0)}%, ${layer.description}`);
+    const eccName = ECC_NAMES[ECC_LEVELS.indexOf(layer.ecc)] ?? '?';
+    console.log(`${layer.name}: ${layer.paletteSize} symbols, ${layer.bitsPerModule} bit/module, ECC ${eccName} (${(layer.ecc * 100).toFixed(0)}%), ${layer.description}`);
   }
 }
 

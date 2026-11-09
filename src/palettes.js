@@ -173,6 +173,14 @@ export function generatePalette(layerName, options = {}) {
   const paletteRgb = palette.map((c) => c.rgb);
   const paletteLab = palette.map((c) => c.lab);
 
+  let minDeltaE = Infinity;
+  for (let i = 0; i < paletteLab.length; i++) {
+    for (let j = i + 1; j < paletteLab.length; j++) {
+      const d = deltaE76(paletteLab[i], paletteLab[j]);
+      if (d < minDeltaE) minDeltaE = d;
+    }
+  }
+
   const rankCount = layerRankCount(layer);
   const maxRankDiff = layerMaxRankDiff(layer);
   const rankOf = new Int16Array(palette.length);
@@ -211,6 +219,7 @@ export function generatePalette(layerName, options = {}) {
     harmony,
     palette: paletteRgb,
     paletteLab,
+    minDeltaE: Number.isFinite(minDeltaE) ? minDeltaE : 0,
     rankOf,
     rankCount,
     maxRankDiff,

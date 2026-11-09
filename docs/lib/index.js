@@ -8,7 +8,8 @@ export { detectPerspective, computeHomography, applyHomography } from './detecto
 export { buildCalibrator } from './calibration.js';
 export { generatePalette } from './palettes.js';
 export { makeLayout, hilbertOrder } from './layout.js';
-export { LAYERS, LAYER_BY_ID, versionToSize, sizeToVersion } from './constants.js';
+export { renderSVG } from './svg.js';
+export { LAYERS, LAYER_BY_ID, ECC_LEVELS, ECC_NAMES, ECC_BY_NAME, eccNameOf, versionToSize, sizeToVersion } from './constants.js';
 export { RankConstraint } from './constraint.js';
 export { rsEncode, rsDecode } from './ecc/rs.js';
 export { bch15Encode, bch15Decode } from './ecc/bch15.js';

@@ -12,6 +12,7 @@ import { buildFrame, parseFrame } from '../src/frame.js';
 import { generatePalette } from '../src/palettes.js';
 import { decodePNG, encodePNG } from '../src/png.js';
 import { applyHomography, computeHomography } from '../src/detector.js';
+import { renderSVG } from '../src/svg.js';
 
 function rng(seed) {
   let s = seed >>> 0;
@@ -137,4 +138,58 @@ test('constraint-on round-trip for L2b and L3c', () => {
     const decoded = decodeAuto(decodePNG(encodePNG(result.image)));
     assert.equal(decoded.text, text, `${layer} constraint round-trip`);
   }
+});
+
+test('ECC selection and Boost ECC', () => {
+  const base = encode('ECC', {
+    layer: 'L2a', width: 512, height: 512, mode: 'fill', constraint: false,
+    eccLevel: 'L', boostEcc: false,
+  });
+  assert.equal(base.meta.eccLevel, 'L');
+  const high = encode('ECC', {
+    layer: 'L2a', width: 512, height: 512, mode: 'fill', constraint: false,
+    eccLevel: 'H', boostEcc: false,
+  });
+  assert.equal(high.meta.eccLevel, 'H');
+  const boosted = encode('ECC', {
+    layer: 'L2a', width: 512, height: 512, mode: 'fill', constraint: false,
+    eccLevel: 'L', boostEcc: true,
+  });
+  assert.ok(boosted.meta.ecc >= base.meta.ecc);
+  for (const result of [base, high, boosted]) {
+    const decoded = decodeAuto(decodePNG(encodePNG(result.image)));
+    assert.equal(decoded.text, 'ECC');
+  }
+});
+
+test('version range, module size and quiet zone', () => {
+  const result = encode('V5', {
+    layer: 'L2a', width: 512, height: 512, mode: 'fill', constraint: false,
+    version: 5, moduleSize: 8, quietZone: 4,
+  });
+  assert.equal(result.meta.version, 5);
+  assert.equal(result.meta.moduleSize, 8);
+  assert.equal(result.meta.quietZone, 4);
+  assert.equal(result.image.width, (result.meta.N + 8) * 8);
+  const decoded = decodeAuto(decodePNG(encodePNG(result.image)));
+  assert.equal(decoded.text, 'V5');
+});
+
+test('SVG output and encoder statistics', () => {
+  const result = encode('SVG', {
+    layer: 'L1', width: 512, height: 512, mode: 'fill', constraint: false,
+  });
+  const svg = renderSVG({
+    symbols: result.symbols,
+    layout: result.layout,
+    palette: result.paletteInfo.palette,
+    moduleSize: result.meta.moduleSize,
+    quietZone: result.meta.quietZone,
+  });
+  assert.ok(svg.startsWith('<svg'));
+  assert.ok(svg.includes('viewBox'));
+  assert.ok(svg.includes('<rect'));
+  assert.ok(result.meta.eccLevel);
+  assert.ok(result.meta.minDeltaE > 0);
+  assert.equal(result.meta.paletteSize, 2);
 });

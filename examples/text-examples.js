@@ -82,6 +82,11 @@ for (const item of cases) {
     N: result.meta.N,
     moduleSize: result.meta.moduleSize,
     bitsPerModule: result.meta.bitsPerModule,
+    ecc: result.meta.ecc,
+    eccLevel: result.meta.eccLevel,
+    minDeltaE: result.meta.minDeltaE,
+    paletteSize: result.meta.paletteSize,
+    quietZone: result.meta.quietZone,
     payloadCapacity: result.meta.payloadCapacity,
     corrected: decoded.meta.correctedSymbols,
     ok,
@@ -90,7 +95,7 @@ for (const item of cases) {
   rows.push(row);
   console.log(
     `${row.label} ${row.bytes}B -> ${row.layer} v${row.version} N=${row.N} ` +
-    `s=${row.moduleSize}px bpm=${row.bitsPerModule.toFixed(2)} cap=${row.payloadCapacity}B ` +
+    `s=${row.moduleSize}px bpm=${row.bitsPerModule.toFixed(2)} ECC=${row.eccLevel} cap=${row.payloadCapacity}B ` +
     `decoded=${row.ok ? 'OK' : 'FAIL'} corrected=${row.corrected} -> ${row.file}`,
   );
 }

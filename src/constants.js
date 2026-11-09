@@ -103,6 +103,13 @@ export const LAYERS = {
 export const LAYER_BY_ID = new Map(Object.values(LAYERS).map((l) => [l.id, l]));
 
 export const ECC_LEVELS = [0.20, 0.30, 0.35, 0.40];
+export const ECC_NAMES = ['L', 'M', 'Q', 'H'];
+export const ECC_BY_NAME = new Map(ECC_NAMES.map((name, i) => [name, ECC_LEVELS[i]]));
+
+export function eccNameOf(ecc) {
+  const i = ECC_LEVELS.indexOf(ecc);
+  return i >= 0 ? ECC_NAMES[i] : null;
+}
 
 export const PALETTE_MODES = ['maxmin', 'harmony'];
 

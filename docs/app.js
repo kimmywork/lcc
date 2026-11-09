@@ -1,4 +1,4 @@
-import { encode, decodeAuto } from './lib/index.js';
+import { encode, decodeAuto, renderSVG } from './lib/index.js';
 
 const $ = (id) => document.getElementById(id);
 const textEl = $('text');
@@ -87,9 +87,52 @@ function friendlyError(error) {
   return msg;
 }
 
+function renderStats(container, meta) {
+  const items = [
+    ['层', meta.layer],
+    ['版本', `v${meta.version} / N=${meta.N}`],
+    ['模块', `${meta.moduleSize}px`],
+    ['静区', `${meta.quietZone ?? '—'} 模块`],
+    ['色板', `${meta.paletteSize} 色 · min ΔE ${Number(meta.minDeltaE).toFixed(1)}`],
+    ['ECC', `${meta.eccLevel ?? '—'} (${(meta.ecc * 100).toFixed(0)}%)`],
+    ['约束', meta.constraint
+      ? `on · rank ${meta.constraintRankCount} / Δ≤${meta.constraintMaxDiff}`
+      : 'off'],
+    ['数据/功能', `${meta.dataCount} / ${meta.functionCount}`],
+    ['载荷/容量', `${meta.payloadSize}B / ${meta.payloadCapacity}B`],
+    ['bit/模块', Number(meta.bitsPerModule).toFixed(3)],
+    ['格式带', `${meta.formatBlocks} 块/副本`],
+    ['种子', meta.seed],
+  ];
+  container.innerHTML = items
+    .map(([k, v]) => `<div class="stat"><span>${k}</span><strong>${v}</strong></div>`)
+    .join('');
+}
+
+function renderScanStats(container, meta) {
+  const items = [
+    ['层', meta.layer],
+    ['版本', `v${meta.version} / N=${meta.N}`],
+    ['模块', `${Number(meta.moduleSize).toFixed(2)}px`],
+    ['色板', `${meta.paletteSize} 色 · min ΔE ${Number(meta.minDeltaE).toFixed(1)}`],
+    ['ECC', `${meta.eccLevel ?? '—'} (${(meta.ecc * 100).toFixed(0)}%)`],
+    ['约束', meta.constraint
+      ? `on · rank ${meta.constraintRankCount} / Δ≤${meta.constraintMaxDiff}`
+      : 'off'],
+    ['校准', meta.calibration],
+    ['RS 符号', `${meta.rsSymbols} · 校正 ${meta.correctedSymbols}`],
+    ['bit/模块', Number(meta.bitsPerModule ?? 0).toFixed(3)],
+    ['格式带', `${meta.formatBlocks ?? '—'} 块/副本`],
+  ];
+  container.innerHTML = items
+    .map(([k, v]) => `<div class="stat"><span>${k}</span><strong>${v}</strong></div>`)
+    .join('');
+}
+
 function generate() {
   const text = textEl.value;
   if (!text.trim()) {
+    $('encodeStats').innerHTML = '';
     $('encodeMeta').textContent = '请输入要编码的文本。';
     return;
   }
@@ -98,6 +141,12 @@ function generate() {
   const mode = $('mode').value;
   const size = Number($('size').value);
   const constraint = $('constraint').checked;
+  const eccLevel = $('ecc').value;
+  const minVersion = Number($('minVersion').value) || 1;
+  const maxVersion = Number($('maxVersion').value) || 100;
+  const moduleSize = $('moduleSize').value === 'auto' ? undefined : Number($('moduleSize').value);
+  const quietZone = $('quietZone').value === 'auto' ? undefined : Number($('quietZone').value);
+  const boostEcc = $('boostEcc').checked;
   try {
     const result = encode(text, {
       layer,
@@ -107,14 +156,24 @@ function generate() {
       height: size,
       constraint,
       maxModulePx: 32,
+      eccLevel,
+      minVersion,
+      maxVersion,
+      moduleSize,
+      quietZone,
+      boostEcc,
     });
     lastEncoded = result;
     drawImage(encodeCanvas, result.image);
-    $('encodeMeta').textContent = encodeMetaText(result.meta);
+    renderStats($('encodeStats'), result.meta);
+    $('encodeMeta').textContent = '';
     $('download').disabled = false;
+    $('downloadSvg').disabled = false;
   } catch (e) {
     lastEncoded = null;
+    $('encodeStats').innerHTML = '';
     $('download').disabled = true;
+    $('downloadSvg').disabled = true;
     $('encodeMeta').textContent = `生成失败：${friendlyError(e)}`;
   }
 }
@@ -169,6 +228,7 @@ async function decodeRGB(image, options = {}) {
         Array.from(payload).map((b) => b.toString(16).padStart(2, '0')).join(' ');
     }
     $('scanText').textContent = text;
+    renderScanStats($('scanStats'), result.meta);
     $('scanMeta').textContent = decodeMetaText(result);
     $('scanResult').hidden = false;
     setStatus(`识别成功 · ${result.meta.layer} v${result.meta.version} · 校正 ${result.meta.correctedSymbols} 个 RS 符号`, 'ok');
@@ -253,15 +313,39 @@ $('download').addEventListener('click', () => {
   }, 'image/png');
 });
 
+$('downloadSvg').addEventListener('click', () => {
+  if (!lastEncoded) return;
+  const svg = renderSVG({
+    symbols: lastEncoded.symbols,
+    layout: lastEncoded.layout,
+    palette: lastEncoded.paletteInfo.palette,
+    moduleSize: lastEncoded.meta.moduleSize,
+    quietZone: lastEncoded.meta.quietZone,
+  });
+  const blob = new Blob([svg], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `lcc_${lastEncoded.meta.layer}_v${lastEncoded.meta.version}.svg`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+});
+
 document.getElementById('cameraPreset').addEventListener('click', () => {
   $('layer').value = 'L1';
   $('palette').value = 'maxmin';
   $('mode').value = 'fill';
   $('size').value = '1024';
   $('constraint').checked = false;
+  $('ecc').value = 'Q';
+  $('boostEcc').checked = true;
+  $('quietZone').value = '4';
+  $('moduleSize').value = 'auto';
+  $('minVersion').value = '1';
+  $('maxVersion').value = '100';
   if (!textEl.value.trim()) textEl.value = 'https://example.com/lcc';
   generate();
-  setStatus('已切换到摄像头黑白预设：L1 + constraint off。', '');
+  setStatus('已切换到摄像头黑白预设：L1 + Q + Boost ECC + 静区 4。', '');
 });
 
 document.getElementById('cameraColorPreset').addEventListener('click', () => {
@@ -270,9 +354,15 @@ document.getElementById('cameraColorPreset').addEventListener('click', () => {
   $('mode').value = 'fill';
   $('size').value = '1024';
   $('constraint').checked = false;
+  $('ecc').value = 'Q';
+  $('boostEcc').checked = true;
+  $('quietZone').value = '4';
+  $('moduleSize').value = 'auto';
+  $('minVersion').value = '1';
+  $('maxVersion').value = '100';
   if (!textEl.value.trim()) textEl.value = 'https://example.com/lcc';
   generate();
-  setStatus('已切换到摄像头彩色预设：L3c（16 色，min ΔE ≈ 49）+ constraint off。', '');
+  setStatus('已切换到摄像头彩色预设：L3c（16 色，min ΔE ≈ 49）+ Q + Boost ECC + 静区 4。', '');
 });
 
 document.querySelectorAll('[data-example]').forEach((btn) => {
@@ -285,6 +375,12 @@ document.querySelectorAll('[data-example]').forEach((btn) => {
       $('layer').value = 'L4f';
       $('palette').value = 'maxmin';
       $('constraint').checked = false;
+      $('ecc').value = 'auto';
+      $('boostEcc').checked = false;
+      $('quietZone').value = 'auto';
+      $('moduleSize').value = 'auto';
+      $('minVersion').value = '1';
+      $('maxVersion').value = '100';
       $('size').value = name.includes('金刚经') ? '2048' : '1024';
       generate();
       setStatus(`已加载示例：${name}。摄像头场景建议使用 L1/L2a/L3c + constraint off。`, '');

@@ -136,7 +136,8 @@
 - 帧头 13 字节：magic `"LC"`、version、layer id、flags、payload length、CRC32。
 - 白化：xorshift32，seed 来自格式带。
 - RS(GF(256))：`0x11D`，生成元 2，系统码，`n≤255`，块间交织。
-- ECC 级：`[0.20, 0.30, 0.35, 0.40]`，按层选择。
+- ECC 级：`L=20%`、`M=30%`、`Q=35%`、`H=40%`；格式带 2 bit ecc 字段。
+- Boost ECC：同一版本内从 H 向下尝试，选能放下载荷的最高 ECC。
 - 格式带 BCH(15,5,7)，解码用 32 码字最近邻。
 - 最终 CRC32 校验。
 
@@ -157,6 +158,9 @@
 ---
 
 ## 7. 编码流程
+
+编码选项：`layer`、`paletteMode`、`eccLevel`（auto/L/M/Q/H）、`boostEcc`、`minVersion`/`maxVersion`、`moduleSize`、`quietZone`、`constraint`、`seed`。
+输出：PNG（Canvas/Node）或 SVG（矢量，适合打印）。
 
 ```
 payload
@@ -301,6 +305,11 @@ bit 14     flags (reserved)
 | 色板 | 灰度等 L\*；彩色 max-min ΔE |
 | 约束 | rank 4/8/16，maxDiff 2/4/8，块 64 |
 | RS | GF(256)，0x11D，生成元 2 |
+| ECC | L/M/Q/H = 20/30/35/40%，可 Boost |
+| 版本范围 | 1..100，可限制 min/max |
+| 模块尺寸 | Auto 或固定 4–32px |
+| 静区 | Auto/2/4/6，打印建议 4 |
+| 输出 | PNG / SVG |
 | 白化 | xorshift32，seed 0..63 |
 | CRC | CRC32 |
 | Web | `docs/`，GitHub Pages `/docs` |
