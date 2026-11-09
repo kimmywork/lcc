@@ -20,6 +20,7 @@
 
 - L1/L2a/L2b 是灰度轴；L3c/L3d/L4e/L4f 是 CIELAB max-min ΔE 色板。
 - 彩色层不再强制包含 L2 的灰阶，以换取更大的最小 ΔE。
+- 形状维度（shape + color）是下一阶段候选，当前层表均为纯颜色/灰度；设计草案见 `docs/research/cimbar-vs-lcc-and-shape.md`。
 - File Mode 不属于分层表，后续单独实现。
 
 ### 1.1 色板最小 ΔE（实测）
@@ -252,9 +253,10 @@ payloadCapacity = kTotal - 13
 1. L2b/L3d 在强反光/高光削顶下仍可能失败。
 2. L4e/L4f 面向清洁/数字/打印，不建议随手拍。
 3. File Mode（24bit）尚未实现。
-4. 多帧/喷泉码尚未实现。
-5. 打印链路未实测；真实打印需要逐机校准。
-6. 不做 QR 兼容；finder 比例 `1:2:1:2:1`。
+4. 形状维度（shape + color）尚未实现；设计草案见 `docs/research/cimbar-vs-lcc-and-shape.md`。
+5. 多帧/喷泉码尚未实现。
+6. 打印链路未实测；真实打印需要逐机校准。
+7. 不做 QR 兼容；finder 比例 `1:2:1:2:1`。
 
 ---
 

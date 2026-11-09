@@ -154,6 +154,10 @@ const result = encode('Hello', {
 Web 编码面板的“高级设置”里可以直接调这些参数；生成后统计面板会显示 ECC、色板 min ΔE、约束 rank、数据/功能模块、容量等。  
 “下载 SVG”输出矢量码面。
 
+## 研究
+
+- [LCC vs Cimbar：差距、形状维度与增强路线](docs/research/cimbar-vs-lcc-and-shape.md)：Cimbar 对比、形状 + 颜色符号设计草案、验证计划与风险。**形状维度尚未实现。**
+
 ## Web 版 / GitHub Pages
 
 Web 版在 `docs/`：
@@ -209,6 +213,7 @@ scripts/             build:web / 本地静态服务 / QR 对比图
 - L2b/L3d 在强反光/高光削顶下仍可能失败；摄像头首选 L1/L2a/L3c。
 - L4e/L4f 面向清洁/数字/打印，不建议随手拍。
 - File Mode（24bit 真彩）尚未实现。
+- 形状维度（shape + color）尚未实现；设计见 [研究文档](docs/research/cimbar-vs-lcc-and-shape.md)。
 - 多帧/喷泉码尚未实现。
 - 打印链路未实测；真实打印需要逐机校准。
 - 不做 QR 兼容；finder 比例 1:2:1:2:1。
