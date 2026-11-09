@@ -2,14 +2,12 @@
  * In-code calibration.
  *
  * L1: black/white threshold.
- * L2: rank classification using the 16-block gray ramp (monotonic lighting
- *     changes are absorbed by nearest measured luminance).
- * L3: 3x4 affine colour correction fitted from the palette calibration
- *     blocks, then CIELAB nearest-neighbour classification.
+ * L2a/L2b: map measured luminance through the 16-block reference gray ramp,
+ *          then classify to the data palette's 4/8 gray levels.
+ * L3c/L3d/L4e/L4f: 3x4 affine colour correction fitted from the palette
+ *          samples, then CIELAB nearest-neighbour classification.
  *
- * Each calibrator also exposes a per-symbol cost vector.  The constraint
- * decoder uses those costs for Viterbi correction, so a few misclassified
- * modules do not destroy the whole constrained block.
+ * Every calibrator exposes per-symbol costs for Viterbi constraint correction.
  */
 
 import { clamp, deltaE76, luminance, nearestIndex, rgbToLab } from './color.js';
@@ -77,31 +75,45 @@ function argmin(costs) {
 export function buildCalibrator({ layerName, layout, paletteInfo, sampler, threshold }) {
   if (layerName === 'L1') {
     const costs = (rgb) => {
-      const lum = luminance(rgb);
-      const d = lum - threshold;
+      const d = luminance(rgb) - threshold;
       return [Math.max(0, d) ** 2, Math.max(0, -d) ** 2];
     };
-    return {
-      type: 'threshold',
-      costs,
-      classify: (rgb) => argmin(costs(rgb)),
-    };
+    return { type: 'threshold', costs, classify: (rgb) => argmin(costs(rgb)) };
   }
 
-  if (layerName === 'L2') {
+  if (paletteInfo.kind === 'gray') {
     const samples = layout.grayBlocks.map((b) => ({
       measuredL: rgbToLab(sampler(b.row, b.col))[0],
-      index: b.symbol,
+      nominalL: rgbToLab(b.rgb)[0],
     }));
     samples.sort((a, b) => a.measuredL - b.measuredL);
-    const costs = (rgb) => {
-      const L = rgbToLab(rgb)[0];
-      const out = new Array(16).fill(Infinity);
-      for (const s of samples) out[s.index] = (L - s.measuredL) ** 2;
-      return out;
+    const levels = paletteInfo.paletteLab.map((p) => p[0]);
+
+    const mapL = (measuredL) => {
+      if (samples.length === 0) return measuredL;
+      if (measuredL <= samples[0].measuredL) return samples[0].nominalL;
+      if (measuredL >= samples[samples.length - 1].measuredL) {
+        return samples[samples.length - 1].nominalL;
+      }
+      for (let i = 1; i < samples.length; i++) {
+        if (measuredL <= samples[i].measuredL) {
+          const a = samples[i - 1];
+          const b = samples[i];
+          const span = b.measuredL - a.measuredL || 1;
+          const t = (measuredL - a.measuredL) / span;
+          return a.nominalL + t * (b.nominalL - a.nominalL);
+        }
+      }
+      return measuredL;
     };
+
+    const costs = (rgb) => {
+      const L = mapL(rgbToLab(rgb)[0]);
+      return levels.map((level) => (L - level) ** 2);
+    };
+
     return {
-      type: 'gray-rank',
+      type: 'gray-map',
       samples,
       costs,
       classify: (rgb) => argmin(costs(rgb)),
@@ -110,7 +122,7 @@ export function buildCalibrator({ layerName, layout, paletteInfo, sampler, thres
 
   const samples = layout.paletteBlocks.map((b) => {
     const measured = sampler(b.row, b.col);
-    const nominal = paletteInfo.palette[b.symbol];
+    const nominal = b.rgb;
     return {
       measured,
       nominal,

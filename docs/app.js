@@ -66,6 +66,17 @@ function decodeMetaText(result) {
 }
 
 function friendlyError(error) {
+  const meta = error?.lccMeta;
+  if (meta) {
+    if (meta.layer === 'L1' || meta.layer === 'L2a' || meta.layer === 'L3c') {
+      return `检测到 ${meta.layer} 码，但纠错失败：请靠近、保持清晰、避开反光。`;
+    }
+    if (meta.layer === 'L2b') {
+      return '检测到 L2b（8 灰）；屏幕反光下可能丢灰阶。建议改用 L2a（4 灰）或 L3c（16 色）+ constraint off。';
+    }
+    const extra = meta.constraint ? '，且开启了 constraint' : '';
+    return `检测到 ${meta.layer} 多级色码${extra}；摄像头建议 L3c/L3d，L4e/L4f 仅用于清洁/数字/打印。`;
+  }
   const msg = String(error?.message ?? error);
   if (msg.includes('no contrast')) return '画面没有足够对比度，请对准码面并避免过曝。';
   if (msg.includes('not enough')) return '没有找到 LCC 定位图案，请让码面完整进入画面。';
@@ -243,13 +254,24 @@ $('download').addEventListener('click', () => {
 
 document.getElementById('cameraPreset').addEventListener('click', () => {
   $('layer').value = 'L1';
-  $('palette').value = 'bucketed';
+  $('palette').value = 'maxmin';
   $('mode').value = 'fill';
   $('size').value = '1024';
   $('constraint').checked = false;
   if (!textEl.value.trim()) textEl.value = 'https://example.com/lcc';
   generate();
-  setStatus('已切换到摄像头友好预设：L1 黑白 + constraint off。', '');
+  setStatus('已切换到摄像头黑白预设：L1 + constraint off。', '');
+});
+
+document.getElementById('cameraColorPreset').addEventListener('click', () => {
+  $('layer').value = 'L3c';
+  $('palette').value = 'maxmin';
+  $('mode').value = 'fill';
+  $('size').value = '1024';
+  $('constraint').checked = false;
+  if (!textEl.value.trim()) textEl.value = 'https://example.com/lcc';
+  generate();
+  setStatus('已切换到摄像头彩色预设：L3c（16 色，min ΔE ≈ 49）+ constraint off。', '');
 });
 
 document.querySelectorAll('[data-example]').forEach((btn) => {
@@ -259,12 +281,12 @@ document.querySelectorAll('[data-example]').forEach((btn) => {
       const response = await fetch(`./examples/${encodeURIComponent(name)}`);
       if (!response.ok) throw new Error(`示例加载失败 (${response.status})`);
       textEl.value = await response.text();
-      $('layer').value = 'L3b';
-      $('palette').value = 'bucketed';
+      $('layer').value = 'L4f';
+      $('palette').value = 'maxmin';
       $('constraint').checked = false;
       $('size').value = name.includes('金刚经') ? '2048' : '1024';
       generate();
-      setStatus(`已加载示例：${name}。摄像头场景建议使用 constraint off。`, '');
+      setStatus(`已加载示例：${name}。摄像头场景建议使用 L1/L2a/L3c + constraint off。`, '');
     } catch (e) {
       setStatus(friendlyError(e), 'err');
     }

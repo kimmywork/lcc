@@ -1,13 +1,19 @@
 /**
  * LCC encoder.
  *
- * Pipeline:
- *   payload -> frame -> whitening -> RS -> interleaving -> constrained
- *   symbol mapping -> layout -> render
+ * payload -> frame -> whitening -> RS -> interleaving -> constrained symbol
+ * mapping -> layout -> render.
  */
 
 import { BitReader } from './bitstream.js';
-import { ECC_LEVELS, FRAME_HEADER_SIZE, LAYERS, MAX_MODULE_PX, MIN_MODULE_PX, QUIET_ZONE, versionToSize } from './constants.js';
+import {
+  ECC_LEVELS,
+  FRAME_HEADER_SIZE,
+  LAYERS,
+  MAX_MODULE_PX,
+  MIN_MODULE_PX,
+  QUIET_ZONE,
+} from './constants.js';
 import { RankConstraint } from './constraint.js';
 import { computeRSBlocks, rsEncodeBlocks } from './ecc/rs.js';
 import { buildFrame } from './frame.js';
@@ -60,9 +66,17 @@ export function chooseVersionAndScale({
   minVersion = 1,
 }) {
   const minSide = Math.min(width, height);
+  const layoutFor = (version) => makeLayout({
+    version,
+    layer: layerName,
+    paletteMode: paletteInfo.mode,
+    harmony,
+    paletteInfo,
+  });
+
   if (mode === 'compact') {
     for (let version = minVersion; version <= 100; version++) {
-      const layout = makeLayout({ version, layer: layerName, paletteMode: paletteInfo.mode, harmony, paletteInfo });
+      const layout = layoutFor(version);
       const cap = capacityFor(layout, layerName, paletteInfo, constraint);
       if (cap.payloadCapacity >= payloadSize) {
         const s = Math.floor(minSide / (layout.N + 2 * quietZone));
@@ -76,9 +90,9 @@ export function chooseVersionAndScale({
   for (let s = maxModulePx; s >= minModulePx; s--) {
     const nMax = Math.floor(minSide / s) - 2 * quietZone;
     if (nMax < 21) continue;
-    let version = Math.min(100, Math.floor((nMax - 21) / 4) + 1);
+    const version = Math.min(100, Math.floor((nMax - 21) / 4) + 1);
     if (version < minVersion) continue;
-    const layout = makeLayout({ version, layer: layerName, paletteMode: paletteInfo.mode, harmony, paletteInfo });
+    const layout = layoutFor(version);
     const cap = capacityFor(layout, layerName, paletteInfo, constraint);
     if (cap.payloadCapacity >= payloadSize) {
       return { version, layout, cap, moduleSize: s };
@@ -93,19 +107,29 @@ function render(symbols, layout, palette, moduleSize, quietZone) {
   const data = new Uint8Array(size * size * 3).fill(255);
   for (let r = 0; r < N; r++) {
     for (let c = 0; c < N; c++) {
-      const sym = symbols[r * N + c];
-      if (sym < 0 || sym >= palette.length) {
-        throw new Error(`LCC: invalid symbol at (${r},${c})`);
+      const i = r * N + c;
+      let color;
+      if (layout.hasFixedColor[i]) {
+        color = [
+          layout.fixedColor[i * 3],
+          layout.fixedColor[i * 3 + 1],
+          layout.fixedColor[i * 3 + 2],
+        ];
+      } else {
+        const sym = symbols[i];
+        if (sym < 0 || sym >= palette.length) {
+          throw new Error(`LCC: invalid symbol at (${r},${c})`);
+        }
+        color = palette[sym];
       }
-      const [rr, gg, bb] = palette[sym];
       const y0 = (r + quietZone) * moduleSize;
       const x0 = (c + quietZone) * moduleSize;
       for (let dy = 0; dy < moduleSize; dy++) {
         let p = ((y0 + dy) * size + x0) * 3;
         for (let dx = 0; dx < moduleSize; dx++) {
-          data[p++] = rr;
-          data[p++] = gg;
-          data[p++] = bb;
+          data[p++] = color[0];
+          data[p++] = color[1];
+          data[p++] = color[2];
         }
       }
     }
@@ -114,12 +138,12 @@ function render(symbols, layout, palette, moduleSize, quietZone) {
 }
 
 export function encode(payload, options = {}) {
-  const layerName = options.layer ?? 'L2';
+  const layerName = options.layer ?? 'L1';
   const layer = LAYERS[layerName];
   if (!layer) throw new Error(`LCC: unknown layer ${layerName}`);
 
-  let paletteMode = options.paletteMode ?? 'bucketed';
-  let harmony = options.harmony ?? false;
+  const paletteMode = options.paletteMode ?? 'maxmin';
+  const harmony = options.harmony ?? false;
   let constraint = options.constraint ?? layer.defaultConstraint;
   if (layerName === 'L1') constraint = false;
 
@@ -135,13 +159,15 @@ export function encode(payload, options = {}) {
     : new Uint8Array(payload);
 
   let paletteInfo = generatePalette(layerName, { mode: paletteMode, harmony });
-  const richFormat = paletteMode !== 'bucketed' || harmony || (options.seed ?? 0) !== 0;
-  const minVersion = richFormat ? 4 : 1;
+  const richFormat = layer.kind === 'color' || constraint || (options.seed ?? 0) !== 0
+    || paletteMode !== 'maxmin' || harmony;
+  const minVersion = richFormat ? 2 : 1;
+
   let chosen;
   if (options.version) {
     const version = options.version;
     if (version < minVersion) {
-      throw new Error('LCC: non-default palette/seed requires version >= 4 (N >= 33)');
+      throw new Error('LCC: this layer/options require version >= 2 (N >= 25)');
     }
     const layout = makeLayout({ version, layer: layerName, paletteMode, harmony, paletteInfo });
     const cap = capacityFor(layout, layerName, paletteInfo, constraint);
@@ -168,22 +194,11 @@ export function encode(payload, options = {}) {
   const { version, layout, cap, moduleSize } = chosen;
   const formatBlocks = layout.format.blocksPerCopy;
 
-  // Small versions only carry layer/ecc/constraint; palette and seed are fixed.
-  if (formatBlocks === 1) {
-    if (paletteMode !== 'bucketed' || harmony || (options.seed ?? 0) !== 0) {
-      throw new Error('LCC: version 1-3 (N<33) only supports bucketed palette, no harmony, seed=0');
-    }
-  }
-  if (formatBlocks === 2) {
-    paletteMode = paletteMode;
-  }
-
   let seed = options.seed ?? 0;
   if (formatBlocks === 1) seed = 0;
-  else if (formatBlocks === 2) seed &= 7;
+  else if (formatBlocks === 2) seed &= 3;
   else seed &= 63;
 
-  // The palette must match the palette mode that the format band can express.
   paletteInfo = generatePalette(layerName, { mode: paletteMode, harmony });
 
   if (payloadBytes.length > cap.payloadCapacity) {
@@ -227,7 +242,7 @@ export function encode(payload, options = {}) {
   const eccIndex = ECC_LEVELS.indexOf(layer.ecc);
   const chunks = packFormatPayload({
     formatBlocks,
-    layerId: layer.id,
+    modeId: layer.id,
     eccIndex,
     paletteMode,
     harmony,

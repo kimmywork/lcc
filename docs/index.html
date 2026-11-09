@@ -31,6 +31,10 @@
         <span class="pill">Encode</span>
       </div>
 
+      <div class="hint">
+        摄像头首选 <strong>L1 / L2a / L3c</strong>；L2b 需受控，L3d 尽量避开反光，L4e/L4f 仅清洁/数字/打印。
+      </div>
+
       <label class="field">
         <span>文本内容</span>
         <textarea id="text" rows="6" placeholder="输入要编码的文本，例如 https://example.com 或一段中文……"></textarea>
@@ -40,24 +44,28 @@
         <span class="muted">示例：</span>
         <button class="ghost small" data-example="心经.txt">心经</button>
         <button class="ghost small" data-example="金刚经.txt">金刚经</button>
-        <button class="ghost small" id="cameraPreset">摄像头友好</button>
+        <button class="ghost small" id="cameraPreset">摄像头黑白</button>
+        <button class="ghost small" id="cameraColorPreset">摄像头彩色</button>
       </div>
 
       <div class="grid-controls">
         <label class="field">
           <span>层</span>
           <select id="layer">
-            <option value="L1">L1 · 黑白</option>
-            <option value="L2" selected>L2 · 16 灰</option>
-            <option value="L3a">L3a · 64 色</option>
-            <option value="L3b">L3b · 256 色</option>
+            <option value="L1" selected>L1 · 黑白</option>
+            <option value="L2a">L2a · 4 灰</option>
+            <option value="L2b">L2b · 8 灰</option>
+            <option value="L3c">L3c · 16 色</option>
+            <option value="L3d">L3d · 32 色</option>
+            <option value="L4e">L4e · 64 色</option>
+            <option value="L4f">L4f · 256 色</option>
           </select>
         </label>
         <label class="field">
           <span>色板</span>
           <select id="palette">
-            <option value="bucketed" selected>bucketed（推荐）</option>
-            <option value="global">global（最大色差）</option>
+            <option value="maxmin" selected>maxmin（推荐）</option>
+            <option value="harmony">harmony（色相弧）</option>
           </select>
         </label>
         <label class="field">
@@ -97,6 +105,10 @@
       <div class="card-head">
         <h2>扫描 / 拍照识别</h2>
         <span class="pill">Decode</span>
+      </div>
+
+      <div class="hint">
+        如果识别失败，先确认码面是 <strong>L1 / L2a / L3c + constraint off</strong>；多级灰/彩在屏幕反光下可能丢级。
       </div>
 
       <div class="actions">

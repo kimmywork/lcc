@@ -152,6 +152,55 @@ export function preprocessVariants(image) {
       gray,
     });
   }
+
+  // Value-channel variants: finder detection must ignore saturated data
+  // modules.  A neutral black pixel has low V and low saturation; a dark
+  // blue/red module has low luminance but high V or high saturation.  Using
+  // V plus a saturation filter keeps the finder ring isolated from the data.
+  const value = new Uint8Array(width * height);
+  const sat = new Float32Array(width * height);
+  for (let i = 0, p = 0; i < value.length; i++, p += 3) {
+    const r = image.data[p];
+    const g = image.data[p + 1];
+    const b = image.data[p + 2];
+    const mx = Math.max(r, g, b);
+    const mn = Math.min(r, g, b);
+    value[i] = mx;
+    sat[i] = mx === 0 ? 0 : (mx - mn) / mx;
+  }
+  const valueOtsu = robustThreshold(value).threshold;
+  const valueMask = new Uint8Array(width * height);
+  for (let i = 0; i < value.length; i++) {
+    valueMask[i] = value[i] < valueOtsu && (sat[i] < 0.5 || value[i] < 80) ? 1 : 0;
+  }
+  variants.push({
+    name: 'value-otsu',
+    mask: valueMask,
+    thresholdAt: () => valueOtsu,
+    channel: 'value',
+  });
+  variants.push({
+    name: 'value-otsu+close',
+    mask: morphClose(valueMask, width, height, 1),
+    thresholdAt: () => valueOtsu,
+    channel: 'value',
+  });
+
+  const valueIntegral = integralImage(value, width, height);
+  for (const [name, window, offset] of configs) {
+    const { mask, threshold } = adaptiveMask(value, width, height, valueIntegral, window, offset);
+    const filtered = new Uint8Array(mask.length);
+    for (let i = 0; i < mask.length; i++) filtered[i] = mask[i] && (sat[i] < 0.5 || value[i] < 80) ? 1 : 0;
+    const thresholdAt = thresholdFunction(threshold, width, height);
+    variants.push({ name: `value-${name}`, mask: filtered, thresholdAt, channel: 'value' });
+    variants.push({
+      name: `value-${name}+close`,
+      mask: morphClose(filtered, width, height, 1),
+      thresholdAt,
+      channel: 'value',
+    });
+  }
+
   return variants;
 }
 

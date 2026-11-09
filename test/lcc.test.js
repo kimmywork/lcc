@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { BitReader, BitWriter } from '../src/bitstream.js';
-import { generateGrayPalette } from '../src/color.js';
+import { deltaE76 } from '../src/color.js';
 import { RankConstraint } from '../src/constraint.js';
 import { decodeAuto } from '../src/decoder.js';
 import { bch15Decode, bch15Encode } from '../src/ecc/bch15.js';
@@ -19,6 +19,16 @@ function rng(seed) {
     s = (s * 1664525 + 1013904223) >>> 0;
     return s / 0x100000000;
   };
+}
+
+function minPairwiseDeltaE(palette) {
+  let min = Infinity;
+  for (let i = 0; i < palette.length; i++) {
+    for (let j = i + 1; j < palette.length; j++) {
+      min = Math.min(min, deltaE76(palette[i], palette[j]));
+    }
+  }
+  return min;
 }
 
 test('RS corrects up to t symbol errors', () => {
@@ -44,17 +54,21 @@ test('BCH(15,5) corrects three bit errors', () => {
   }
 });
 
-test('palette nesting: first 16 L3b entries are the L2 grays', () => {
-  const gray = generateGrayPalette(16);
-  const l3b = generatePalette('L3b', { mode: 'bucketed' });
-  assert.equal(l3b.palette.length, 256);
-  assert.deepEqual(l3b.palette.slice(0, 16), gray);
-  assert.equal(l3b.rankCounts.reduce((a, b) => a + b, 0), 256);
+test('palette sizes and minimum DeltaE', () => {
+  const expected = { L1: 2, L2a: 4, L2b: 8, L3c: 16, L3d: 32, L4e: 64, L4f: 256 };
+  for (const [layer, size] of Object.entries(expected)) {
+    const p = generatePalette(layer, { mode: 'maxmin' });
+    assert.equal(p.palette.length, size, layer);
+  }
+  assert.ok(minPairwiseDeltaE(generatePalette('L3c').paletteLab) >= 20);
+  assert.ok(minPairwiseDeltaE(generatePalette('L3d').paletteLab) >= 15);
 });
 
-test('reversible rank constraint round-trips and satisfies the bound', () => {
-  const palette = generatePalette('L3b', { mode: 'bucketed' });
+test('reversible rank constraint works for 8-rank gray', () => {
+  const palette = generatePalette('L2b', { mode: 'maxmin' });
   const rc = new RankConstraint(palette);
+  assert.equal(rc.rankCount, 8);
+  assert.equal(rc.maxDiff, 4);
   const D = 700;
   const bits = rc.capacityBitsForModules(D);
   const rand = rng(7);
@@ -63,7 +77,7 @@ test('reversible rank constraint round-trips and satisfies the bound', () => {
   const source = writer.toBytes();
   const symbols = rc.encode(new BitReader(source, bits), D);
   for (let i = 1; i < symbols.length; i++) {
-    assert.ok(Math.abs(palette.rankOf[symbols[i]] - palette.rankOf[symbols[i - 1]]) <= 8);
+    assert.ok(Math.abs(palette.rankOf[symbols[i]] - palette.rankOf[symbols[i - 1]]) <= palette.maxRankDiff);
   }
   const decoded = rc.decode(symbols, { lenient: true }).toBytes();
   const a = new BitReader(source, bits);
@@ -94,17 +108,33 @@ test('homography maps the four canonical corners', () => {
 
 test('clean-image round-trip for all layers', () => {
   const text = 'LCC round-trip 你好';
-  for (const layer of ['L1', 'L2', 'L3a', 'L3b']) {
+  for (const layer of ['L1', 'L2a', 'L2b', 'L3c', 'L3d', 'L4e', 'L4f']) {
     const result = encode(text, {
       layer,
       width: 512,
       height: 512,
       mode: 'fill',
       maxModulePx: 32,
-      constraint: layer !== 'L1',
+      constraint: false,
     });
     const png = encodePNG(result.image);
     const decoded = decodeAuto(decodePNG(png));
     assert.equal(decoded.text, text, `${layer} round-trip`);
+  }
+});
+
+test('constraint-on round-trip for L2b and L3c', () => {
+  const text = 'constraint on';
+  for (const layer of ['L2b', 'L3c']) {
+    const result = encode(text, {
+      layer,
+      width: 512,
+      height: 512,
+      mode: 'fill',
+      maxModulePx: 32,
+      constraint: true,
+    });
+    const decoded = decodeAuto(decodePNG(encodePNG(result.image)));
+    assert.equal(decoded.text, text, `${layer} constraint round-trip`);
   }
 });

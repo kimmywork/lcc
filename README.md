@@ -1,27 +1,44 @@
 # LCC — Layered Chromatic Code
 
 > 方形、分层、按信道能力换符号表的二维图形码参考实现。
-> 旧 HLC（Hexagonal Layered Code）六边形实现已删除，设计文档已由 [LCC 规范](docs/lcc-spec.md) 取代。
+> 旧 HLC（Hexagonal Layered Code）六边形实现已删除，设计文档见 [LCC 规范](docs/lcc-spec.md)。
 
-LCC 用同一套方形几何承载 L1/L2/L3a/L3b 四层符号表：
+## 层级
 
-| 层 | 符号表 | 名义 bit/模块 | ECC | 典型信道 |
+| 层 | 符号表 | bit/模块 | ECC | 摄像头建议 |
 | --- | --- | --- | --- | --- |
-| L1 | 2 态黑白 | 1 | 20% | 兜底 |
-| L2 | 16 级等 L\* 灰 | 4 | 35% | 屏幕 + 打印 |
-| L3a | 64 色（近似 CMYK） | 6 | 40% | 打印 / 保守屏幕 |
-| L3b | 256 色（sRGB） | 8 | 40% | 屏幕 / 摄像头 |
+| **L1** | 2 态黑白 | 1 | 20% | **首选** |
+| **L2a** | 4 级等 L\* 灰 | 2 | 20% | **推荐** |
+| **L2b** | 8 级等 L\* 灰 | 3 | 30% | 受控拍摄 |
+| **L3c** | 16 色 max-min ΔE | 4 | 35% | **摄像头彩色首选** |
+| **L3d** | 32 色 max-min ΔE | 5 | 40% | 受控拍摄 |
+| **L4e** | 64 色 max-min ΔE | 6 | 40% | 清洁/数字/打印 |
+| **L4f** | 256 色 max-min ΔE | 8 | 40% | 清洁/数字/打印 |
+| **File** | 24bit 真彩 | 24 | CRC32 | 纯数字，独立模式 |
+
+色板的**最小两两 ΔE** 决定摄像头鲁棒性（实测）：
+
+| 层 | 最小 ΔE |
+| --- | ---: |
+| L2a（4 灰） | 33.2 |
+| L2b（8 灰） | 14.2 |
+| L3c（16 色） | **48.8** |
+| L3d（32 色） | 35.7 |
+| L4e（64 色） | 25.0 |
+| L4f（256 色） | 13.7 |
+
+> 16 色比 16 灰更稳，是因为彩色是三维空间；64/256 色太密，只适合清洁/数字/打印。
 
 ## 特性
 
 - **方形动态版本**：`N = 21 + 4(v-1)`，`v=1..100`；最小模块 4px，fill 模式自动铺满画布。
 - **自定义定位图案**：`1:2:1:2:1` 同心方环，和 QR 的 `1:1:3:1:1` 明显区分。
-- **BR 对齐图案**：`N≥33` 时提供第四个单应锚点，摄像头透视更稳。
+- **BR 对齐图案**：`N≥25` 提供第四个单应锚点。
 - **真 RS(GF(256))**：系统码、分块、交织、Berlekamp-Massey 解码。
 - **BCH(15,5) 格式带**：双副本多数投票，版本由几何推导。
-- **可逆邻差约束**：16 亮度 rank、`|Δrank|≤8`、Hilbert 顺序 + 分块枚举编码。
-- **bucketed / global 双色板**：bucketed 支持约束，global 追求最大色差。
-- **摄像头链路**：连通域找 finder + 单应 + 定时图案消歧 + 色板仿射校准。
+- **可逆邻差约束**：按层的 rank 数（4/8/16）和 `maxDiff` 参数化。
+- **max-min ΔE 色板**：16/32/64/256 色，最小 ΔE 可测。
+- **QR 式预处理**：Otsu / Bradley 自适应阈值、闭运算、多假设重试、V 通道 finder 检测、四锚点单应、局部光照归一化、Viterbi 约束修正。
 - **零运行时依赖**：Node 端只用内置 `zlib`；浏览器端只用 Canvas。
 
 ## 快速开始
@@ -29,29 +46,19 @@ LCC 用同一套方形几何承载 L1/L2/L3a/L3b 四层符号表：
 需要 Node.js ≥ 18。
 
 ```bash
-# 生成两个基础 demo
-npm run demo
-
-# 生成《心经》《金刚经》示例
-node examples/encode-sutras.js
-
-# 构建 Web 版（把浏览器核心复制到 docs/lib）
-npm run build:web
-
-# 本地启动 Web 版
-npm run web
-# 打开 http://localhost:8080
-
-# 测试
-npm test
+npm run demo                 # L2a + L3c demo
+node examples/encode-sutras.js  # 心经/金刚经 L4f 示例
+npm test                     # 测试
+npm run build:web            # 复制浏览器核心到 docs/lib
+npm run web                  # http://localhost:8080
 ```
 
 ## CLI
 
 ```bash
-node src/cli.js encode --input "Hello LCC" --output hello.png --layer L2
-node src/cli.js encode --input-file examples/心经.txt --output sutra.png --layer L3b --size 2048 --no-constraint
-node src/cli.js decode --input sutra.png
+node src/cli.js encode --input "Hello LCC" --output hello.png --layer L1
+node src/cli.js encode --input "彩色" --output color.png --layer L3c --size 1024 --no-constraint
+node src/cli.js decode --input color.png
 node src/cli.js info
 ```
 
@@ -61,16 +68,13 @@ node src/cli.js info
 import { encode, decodeAuto } from './src/index.js';
 
 const result = encode('Hello, LCC!', {
-  layer: 'L3b',
+  layer: 'L3c',           // L1 | L2a | L2b | L3c | L3d | L4e | L4f
   width: 1024,
   height: 1024,
-  mode: 'fill',          // 'fill' | 'compact'
-  paletteMode: 'bucketed', // 'bucketed' | 'global'
-  constraint: false,     // 摄像头场景建议 false
+  mode: 'fill',
+  paletteMode: 'maxmin',  // 'maxmin' | 'harmony'
+  constraint: false,      // 摄像头建议 false
 });
-
-console.log(result.meta);
-// { layer, version, N, moduleSize, bitsPerModule, payloadCapacity, ... }
 
 const decoded = decodeAuto({
   width: result.image.width,
@@ -80,43 +84,42 @@ const decoded = decodeAuto({
 console.log(decoded.text);
 ```
 
-- `encode()` 返回原始 RGB 图像（`{width,height,data}`），可直接画到 Canvas 或写成 PNG。
-- `decodeAuto()` 先尝试轴对齐检测，再尝试透视检测。
-- Node 端 PNG 读写见 `src/png.js`。
-
 ## Web 版 / GitHub Pages
 
 Web 版在 `docs/`：
 
 - `docs/index.html`：编码 + 扫描 UI。
 - `docs/app.js`：Canvas 编码、文件上传、摄像头拍照、连续扫描。
-- `docs/lib/`：由 `npm run build:web` 从 `src/` 复制，浏览器兼容。
-- `docs/lcc-spec.md`：本规范。
+- `docs/lib/`：由 `npm run build:web` 从 `src/` 复制。
+- `docs/lcc-spec.md`：规范。
 
-部署到 GitHub Pages：仓库 Settings → Pages → Source 选择 `Deploy from a branch`，目录选 `/docs`。
+部署到 GitHub Pages：Settings → Pages → Source 选 `Deploy from a branch`，目录选 `/docs`。
 
-摄像头需要 HTTPS 或 localhost。
+摄像头需要 HTTPS 或 localhost。编码面板有：
 
-### 摄像头/拍照建议
-
-- **首选 L1 黑白 + constraint off**：二值层对屏幕摩尔纹、反光、亮度梯度最稳，和 QR 的鲁棒性同级。
-- L2/L3 用于清洁截图、文件或受控拍摄；摄像头场景请关闭 constraint，并避免屏幕高光/反光。
-- 多级灰/彩在强反光/高光削顶时会丢灰阶/色阶，这是多级码的固有限制，不是 finder 检测问题。
-- Web 编码面板的“摄像头友好”按钮会切到 L1 + constraint off。
-
-解码器已加入 QR 式预处理：Otsu / Bradley 局部自适应阈值、形态学闭运算、多假设重试、finder 径向环检测、四锚点单应、定时图案消歧、局部光照归一化、L2 局部 rank 和 Viterbi 约束修正。
+- **摄像头黑白**：L1 + constraint off。
+- **摄像头彩色**：L3c + constraint off。
+- 示例按钮：心经/金刚经使用 L4f（高容量）。
 
 ## 示例
 
 | 示例 | 图像 | 说明 |
 | --- | --- | --- |
-| L2 短文本 | ![demo_L2](demo_outputs/demo_L2.png) | 25×25 模块，17px，约束开启 |
-| L3b 短 URL | ![demo_L3b](demo_outputs/demo_L3b.png) | 21×21 模块，20px，约束开启 |
-| 心经 | ![心经](demo_outputs/心经_L3b_2048.png) | 944B，v10 / N=57，32px |
-| 金刚经 | ![金刚经](demo_outputs/金刚经_L3b_2048.png) | 20406B，v45 / N=197，10px |
-| 摄像头模拟 | ![camera_simulation](demo_outputs/camera_simulation.png) | 透视 + 色偏 + constraint off，Web 扫描可直接识别 |
+| L2a 短文本 | ![demo_L2a](demo_outputs/demo_L2a.png) | 4 级灰，摄像头友好 |
+| L3c 短 URL | ![demo_L3c](demo_outputs/demo_L3c.png) | 16 色，min ΔE ≈ 49 |
+| 心经 | ![心经](demo_outputs/心经_L4f_2048.png) | 944B，L4f |
+| 金刚经 | ![金刚经](demo_outputs/金刚经_L4f_2048.png) | 20406B，L4f |
+| 摄像头模拟 | ![camera_simulation](demo_outputs/camera_simulation.png) | 透视 + 色偏，L3c |
 
-关于 finder 开销：三个 finder 固定 192 模块。N=21 时占 43.5%，N=57 时 5.9%，N=197 时 0.5%。小 demo 看起来 finder 很大，是因为 fill 模式为了让小数据铺满画布选了很小的 N；真实数据量下占比会迅速下降。
+关于 finder 开销：三个 finder 固定 192 模块。N=21 时占 43.5%，N=57 时 5.9%，N=197 时 0.5%。小 demo 看起来 finder 很大，是因为 fill 模式为了让小数据铺满画布选了很小的 N。
+
+## 摄像头建议
+
+- **L1 / L2a / L3c**：首选。
+- **L2b / L3d**：受控拍摄，避开屏幕高光和强反光。
+- **L4e / L4f**：清洁截图、文件、数字、打印；不建议随手拍。
+- 摄像头场景关闭 constraint；清洁数字码可以开启。
+- 多级灰/彩在强反光/高光削顶下仍可能丢级；这不是 finder 检测问题，而是多级量化问题。
 
 ## 项目结构
 
@@ -128,10 +131,10 @@ src/
   preprocess.js      Otsu / 自适应阈值 / 闭运算 / 多假设
   illumination.js    finder/alignment 黑白云模型
   local-rank.js      L2 局部 rank 分类
-  calibration.js     L1/L2/L3 校准
+  calibration.js     L1/灰/彩校准
   layout.js          finder / 对齐 / 格式带 / 枢纽 / Hilbert
-  palettes.js        bucketed / global 色板
-  constraint.js      可逆邻差约束
+  palettes.js        gray / max-min ΔE 色板
+  constraint.js      可逆邻差约束（参数化 rank）
   ecc/               GF(256) / RS / BCH / CRC32
   png.js             Node PNG I/O
   index.js           公共 API
@@ -143,12 +146,12 @@ scripts/             build:web / 本地静态服务
 
 ## 已知限制
 
-- 多级灰/彩在强反光/高光削顶下仍可能失败；摄像头首选 L1 黑白 + constraint off。
-- File Mode（24bit 真彩数字承载）尚未实现。
+- L2b/L3d 在强反光/高光削顶下仍可能失败；摄像头首选 L1/L2a/L3c。
+- L4e/L4f 面向清洁/数字/打印，不建议随手拍。
+- File Mode（24bit 真彩）尚未实现。
 - 多帧/喷泉码尚未实现。
-- 打印链路未实测；L3a 是近似 CMYK 色域。
-- 小版本（N<33）没有对齐图案，依赖三 finder + 暗角回退。
-- 不做 QR 兼容；前端 App 先跑 LCC probe，再决定交给 LCC 还是 QR 解码器。
+- 打印链路未实测；真实打印需要逐机校准。
+- 不做 QR 兼容；finder 比例 1:2:1:2:1。
 
 ## 许可证
 

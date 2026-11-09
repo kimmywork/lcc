@@ -16,16 +16,16 @@ fs.mkdirSync(outDir, { recursive: true });
 
 const demos = [
   {
-    name: 'demo_L2',
-    layer: 'L2',
-    text: 'LCC demo · L2 grayscale · 你好，分层彩色码！',
-    options: { width: 512, height: 512, mode: 'fill', maxModulePx: 32 },
+    name: 'demo_L2a',
+    layer: 'L2a',
+    text: 'LCC demo · L2a 4-level gray · 你好，分层彩色码！',
+    options: { width: 512, height: 512, mode: 'fill', maxModulePx: 32, constraint: false },
   },
   {
-    name: 'demo_L3b',
-    layer: 'L3b',
-    text: 'https://example.com/lcc?layer=L3b&demo=1',
-    options: { width: 512, height: 512, mode: 'fill', maxModulePx: 32 },
+    name: 'demo_L3c',
+    layer: 'L3c',
+    text: 'https://example.com/lcc?layer=L3c&demo=1',
+    options: { width: 512, height: 512, mode: 'fill', maxModulePx: 32, constraint: false },
   },
 ];
 

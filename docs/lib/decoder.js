@@ -8,7 +8,7 @@
 
 import { BitWriter } from './bitstream.js';
 import { buildCalibrator } from './calibration.js';
-import { luminance, nearestIndex, rgbToLab } from './color.js';
+import { nearestIndex, rgbToLab } from './color.js';
 import { ECC_LEVELS, LAYERS, LAYER_BY_ID, sizeToVersion, versionToSize } from './constants.js';
 import { RankConstraint, viterbiCorrect } from './constraint.js';
 import { detectPerspective } from './detector.js';
@@ -229,16 +229,18 @@ export function decode(image, options = {}) {
     det.originY + (row + 0.5) * det.s,
   ]);
   const version = options.version ?? det.version ?? sizeToVersion(det.N);
-  const layoutProbe = makeLayout({ version, layer: 'L1', paletteMode: 'bucketed' });
+  const layoutProbe = makeLayout({ version, layer: 'L1', paletteMode: 'maxmin' });
   const thresholdAtRowCol = det.thresholdAtRowCol ?? (() => det.threshold ?? 128);
   const getFormatSymbol = (r, c) => {
     const rgb = rawSampler(r, c);
-    return luminance(rgb) < thresholdAtRowCol(r, c) ? BLACK : WHITE;
+    const v = Math.max(rgb[0], rgb[1], rgb[2]);
+    return v < thresholdAtRowCol(r, c) ? BLACK : WHITE;
   };
   const fmt = readFormatBand(getFormatSymbol, layoutProbe);
 
-  const layerName = options.layer ?? LAYER_BY_ID.get(fmt.layerId)?.name;
-  if (!layerName) throw new Error(`LCC decode: unknown layer id ${fmt.layerId}`);
+  const layer = LAYER_BY_ID.get(fmt.modeId);
+  const layerName = options.layer ?? layer?.name;
+  if (!layerName) throw new Error(`LCC decode: unknown layer id ${fmt.modeId}`);
   const paletteMode = options.paletteMode ?? fmt.paletteMode;
   const harmony = options.harmony ?? fmt.harmony;
   const constraint = options.constraint ?? fmt.constraint;
@@ -270,12 +272,13 @@ export function decode(image, options = {}) {
   }
 
   let localRankCosts = null;
-  if (layerName === 'L2' && (mode === 'perspective' || options.localRank)) {
-    const lr = localRankSymbols({ layout, rgbSamples });
+  if (options.localRank === true && layerName !== 'L1' && paletteInfo.kind === 'gray') {
+    const lr = localRankSymbols({ layout, rgbSamples, levels: paletteInfo.paletteSize });
     symbols = Array.from(lr.symbols);
     localRankCosts = lr.costs;
   }
 
+  const errorMeta = { layer: layerName, version, N: layout.N, paletteMode, constraint, seed };
   let writer;
   let capacityBits;
   if (layerName === 'L1') {
@@ -292,7 +295,12 @@ export function decode(image, options = {}) {
       for (let i = 0; i < rgbSamples.length; i++) costs[i] = calibrator.costs(rgbSamples[i]);
       corrected = viterbiCorrect(costs, paletteInfo, rc.initialRank);
     }
-    writer = rc.decode(corrected, { lenient: true });
+    try {
+      writer = rc.decode(corrected, { lenient: true });
+    } catch (e) {
+      e.lccMeta = errorMeta;
+      throw e;
+    }
     capacityBits = rc.capacityBitsForModules(layout.dataCount);
   } else {
     const bitsPerModule = LAYERS[layerName].bitsPerModule;
@@ -306,9 +314,21 @@ export function decode(image, options = {}) {
   const bitBytes = writer.toBytes();
   const rsReceived = bitBytes.slice(0, S);
   const ecc = ECC_LEVELS[fmt.eccIndex] ?? LAYERS[layerName].ecc;
-  const rs = rsDecodeBlocks(rsReceived, ecc);
+  let rs;
+  try {
+    rs = rsDecodeBlocks(rsReceived, ecc);
+  } catch (e) {
+    e.lccMeta = errorMeta;
+    throw e;
+  }
   const frameBytes = makeWhitening(seed)(rs.data);
-  const frame = parseFrame(frameBytes);
+  let frame;
+  try {
+    frame = parseFrame(frameBytes);
+  } catch (e) {
+    e.lccMeta = errorMeta;
+    throw e;
+  }
 
   return {
     payload: frame.payload,
@@ -340,10 +360,14 @@ export function decodeAuto(image, options = {}) {
   const byName = new Map(variants.map((v) => [v.name, v]));
   const sequence = [];
   if (!detectorOption || detectorOption === 'axis') {
-    sequence.push(['otsu', 'axis'], ['otsu+close', 'axis']);
+    sequence.push(['value-otsu', 'axis'], ['value-otsu+close', 'axis'], ['otsu', 'axis'], ['otsu+close', 'axis']);
   }
   if (!detectorOption || detectorOption === 'perspective') {
     for (const name of [
+      'value-adaptive-1/8+close',
+      'value-adaptive-1/8',
+      'value-otsu+close',
+      'value-otsu',
       'adaptive-1/8+close',
       'adaptive-1/8',
       'adaptive-1/16+close',
@@ -357,14 +381,18 @@ export function decodeAuto(image, options = {}) {
     }
   }
   const errors = [];
+  let lastMeta = null;
   for (const [name, detector] of sequence) {
     const variant = byName.get(name);
     if (!variant) continue;
     try {
       return decode(image, { ...options, detector, variant });
     } catch (e) {
+      if (e.lccMeta) lastMeta = e.lccMeta;
       errors.push(`${name}/${detector}: ${e.message}`);
     }
   }
-  throw new Error(`LCC decode failed (${errors.slice(0, 8).join(' | ')})`);
+  const err = new Error(`LCC decode failed (${errors.slice(0, 8).join(' | ')})`);
+  if (lastMeta) err.lccMeta = lastMeta;
+  throw err;
 }

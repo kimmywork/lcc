@@ -159,7 +159,7 @@ function timingScore(H, image, thresholdAt, N) {
     const [x, y] = applyHomography(H, c + 0.5, 6.5);
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     const rgb = sampleImage(image, x, y, 1);
-    const bit = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] < thresholdAt(x, y) ? 0 : 1;
+    const bit = Math.max(rgb[0], rgb[1], rgb[2]) < thresholdAt(x, y) ? 0 : 1;
     if (bit === (c % 2 === 0 ? 0 : 1)) matches++;
     total++;
   }
@@ -167,7 +167,7 @@ function timingScore(H, image, thresholdAt, N) {
     const [x, y] = applyHomography(H, 6.5, r + 0.5);
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     const rgb = sampleImage(image, x, y, 1);
-    const bit = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] < thresholdAt(x, y) ? 0 : 1;
+    const bit = Math.max(rgb[0], rgb[1], rgb[2]) < thresholdAt(x, y) ? 0 : 1;
     if (bit === (r % 2 === 0 ? 0 : 1)) matches++;
     total++;
   }
@@ -184,8 +184,7 @@ function alignmentScore(H, image, thresholdAt, N) {
       const [x, y] = applyHomography(H, col0 + c + 0.5, row0 + r + 0.5);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
       const rgb = sampleImage(image, x, y, 1);
-      const lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
-      const bit = lum < thresholdAt(x, y) ? 0 : 1;
+      const bit = Math.max(rgb[0], rgb[1], rgb[2]) < thresholdAt(x, y) ? 0 : 1;
       if (bit === ALIGNMENT_PATTERN[r][c]) matches++;
       total++;
     }
@@ -201,8 +200,7 @@ function finderScore(H, image, thresholdAt, row0, col0) {
       const [x, y] = applyHomography(H, col0 + c + 0.5, row0 + r + 0.5);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
       const rgb = sampleImage(image, x, y, 1);
-      const lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
-      const bit = lum < thresholdAt(x, y) ? 0 : 1;
+      const bit = Math.max(rgb[0], rgb[1], rgb[2]) < thresholdAt(x, y) ? 0 : 1;
       if (bit === FINDER_PATTERN[r][c]) matches++;
       total++;
     }
@@ -402,9 +400,18 @@ export function detectPerspective(image, options = {}) {
             timingScore: scoreT,
             alignmentScore: scoreA,
             sampler: (row, col) => {
-              const [x, y] = applyHomography(H, col + 0.5, row + 0.5);
-              const radius = Math.max(1, Math.floor(((tl.s + tr.s + bl.s) / 3) / 4));
-              return sampleImage(image, x, y, radius);
+              // Sample a 3x3 sub-grid in canonical module coordinates and
+              // take the per-channel median.  A square average in image
+              // space can cross module boundaries under perspective.
+              const samples = [];
+              for (const dv of [-0.2, 0, 0.2]) {
+                for (const du of [-0.2, 0, 0.2]) {
+                  const [x, y] = applyHomography(H, col + 0.5 + du, row + 0.5 + dv);
+                  samples.push(sampleImage(image, x, y, 0));
+                }
+              }
+              const med = (k) => samples.map((s) => s[k]).sort((a, b) => a - b)[4];
+              return [med(0), med(1), med(2)];
             },
           };
         }

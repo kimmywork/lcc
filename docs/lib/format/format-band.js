@@ -3,14 +3,15 @@
  *
  * Payload is split into 5-bit BCH(15,5) blocks.  Each block is rendered as
  * 2 rows x 8 columns (15 codeword bits + one padding bit).  Two mirrored
- * copies are stacked in the bottom-right corner.
+ * copies are used; N>=25 places them near the top-right and bottom-left
+ * finders.
  *
- *   1 block / copy : layer(2) + ecc(2) + constraint(1)
- *   2 blocks/copy  : layer(2) + ecc(2) + palette(2) + constraint(1) + seed(3)
- *   3 blocks/copy  : layer(2) + ecc(2) + palette(2) + seed(6) + flags(3)
+ *   1 block / copy : mode(3) + ecc(2)
+ *   2 blocks/copy  : mode(3) + ecc(2) + constraint(1) + palette(2) + seed(2)
+ *   3 blocks/copy  : mode(3) + ecc(2) + constraint(1) + palette(2) + seed(6) + flags(1)
  *
- * Version/N is intentionally not stored: the decoder derives it from the
- * finder-centre distance.  This keeps the format band small on small codes.
+ * Mode is the layer id (L1/L2a/L2b/L3c/L3d/L4e/L4f).  Version/N is derived
+ * from the finder-centre distance and timing pattern.
  */
 
 import { bch15Decode, bch15Encode } from '../ecc/bch15.js';
@@ -28,43 +29,48 @@ function valueOf(bits, offset, n) {
   return v;
 }
 
+function paletteBitsOf(paletteMode, harmony) {
+  if (harmony) return 1;
+  if (paletteMode === 'harmony') return 1;
+  return 0;
+}
+
 export function packFormatPayload({
   formatBlocks,
-  layerId,
+  modeId,
   eccIndex,
-  paletteMode = 'bucketed',
+  paletteMode = 'maxmin',
   harmony = false,
   seed = 0,
   constraint = false,
   compressed = false,
   encrypted = false,
 }) {
-  const paletteBits = (paletteMode === 'global' ? 2 : 0) | (harmony ? 1 : 0);
+  const paletteBits = paletteBitsOf(paletteMode, harmony);
   let bits;
   if (formatBlocks === 1) {
-    bits = [...bitsOf(layerId, 2), ...bitsOf(eccIndex, 2), constraint ? 1 : 0];
+    bits = [...bitsOf(modeId, 3), ...bitsOf(eccIndex, 2)];
   } else if (formatBlocks === 2) {
     bits = [
-      ...bitsOf(layerId, 2),
+      ...bitsOf(modeId, 3),
       ...bitsOf(eccIndex, 2),
-      ...bitsOf(paletteBits, 2),
       constraint ? 1 : 0,
-      ...bitsOf(seed & 7, 3),
+      ...bitsOf(paletteBits, 2),
+      ...bitsOf(seed & 3, 2),
     ];
   } else {
-    const flags = (constraint ? 1 : 0) | (compressed ? 2 : 0) | (encrypted ? 4 : 0);
     bits = [
-      ...bitsOf(layerId, 2),
+      ...bitsOf(modeId, 3),
       ...bitsOf(eccIndex, 2),
+      constraint ? 1 : 0,
       ...bitsOf(paletteBits, 2),
       ...bitsOf(seed & 63, 6),
-      ...bitsOf(flags, 3),
+      compressed || encrypted ? 1 : 0,
     ];
   }
   const chunks = [];
   for (let i = 0; i < formatBlocks; i++) {
-    const offset = i * 5;
-    chunks.push(valueOf(bits, offset, 5));
+    chunks.push(valueOf(bits, i * 5, 5));
   }
   return chunks;
 }
@@ -72,50 +78,50 @@ export function packFormatPayload({
 export function unpackFormatPayload(chunks, formatBlocks) {
   const bits = [];
   for (const c of chunks) bits.push(...bitsOf(c, 5));
-  const layerId = valueOf(bits, 0, 2);
-  const eccIndex = valueOf(bits, 2, 2);
+  const modeId = valueOf(bits, 0, 3);
+  const eccIndex = valueOf(bits, 3, 2);
   if (formatBlocks === 1) {
     return {
-      layerId,
+      modeId,
       eccIndex,
-      paletteMode: 'bucketed',
+      paletteMode: 'maxmin',
       harmony: false,
       seed: 0,
-      constraint: bits[4] === 1,
+      constraint: false,
       compressed: false,
       encrypted: false,
     };
   }
   if (formatBlocks === 2) {
-    const paletteBits = valueOf(bits, 4, 2);
+    const paletteBits = valueOf(bits, 6, 2);
     return {
-      layerId,
+      modeId,
       eccIndex,
-      paletteMode: paletteBits >= 2 ? 'global' : 'bucketed',
-      harmony: (paletteBits & 1) === 1,
-      seed: valueOf(bits, 7, 3),
-      constraint: bits[6] === 1,
+      paletteMode: paletteBits === 1 ? 'harmony' : 'maxmin',
+      harmony: paletteBits === 1,
+      seed: valueOf(bits, 8, 2),
+      constraint: bits[5] === 1,
       compressed: false,
       encrypted: false,
     };
   }
-  const paletteBits = valueOf(bits, 4, 2);
-  const seed = valueOf(bits, 6, 6);
-  const flags = valueOf(bits, 12, 3);
+  const paletteBits = valueOf(bits, 6, 2);
+  const seed = valueOf(bits, 8, 6);
+  const flag = bits[14] === 1;
   return {
-    layerId,
+    modeId,
     eccIndex,
-    paletteMode: paletteBits >= 2 ? 'global' : 'bucketed',
-    harmony: (paletteBits & 1) === 1,
+    paletteMode: paletteBits === 1 ? 'harmony' : 'maxmin',
+    harmony: paletteBits === 1,
     seed,
-    constraint: (flags & 1) === 1,
-    compressed: (flags & 2) === 2,
-    encrypted: (flags & 4) === 4,
+    constraint: bits[5] === 1,
+    compressed: flag,
+    encrypted: flag,
   };
 }
 
 export function writeFormatBand(symbols, layout, chunks) {
-  const { copies, blocksPerCopy, cols } = layout.format;
+  const { copies, blocksPerCopy } = layout.format;
   for (const copy of copies) {
     for (let block = 0; block < blocksPerCopy; block++) {
       const cw = bch15Encode(chunks[block] ?? 0);
@@ -132,7 +138,7 @@ export function writeFormatBand(symbols, layout, chunks) {
 }
 
 export function readFormatBand(getSymbol, layout) {
-  const { copies, blocksPerCopy, cols } = layout.format;
+  const { copies, blocksPerCopy } = layout.format;
   const decodedCopies = [];
   for (const copy of copies) {
     const chunks = [];

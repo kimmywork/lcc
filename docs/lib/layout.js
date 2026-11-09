@@ -1,16 +1,11 @@
 /**
  * LCC symbol layout.
  *
- * The layout is defined entirely in module units.  It is shared by the
- * encoder and decoder, so every function module, calibration block and data
- * position is reproducible from (version, layer, palette mode).
- *
- * v1 function patterns:
- *   - three 7x7 custom finders with a 1:2:1:2:1 profile
- *   - a 1-module separator around each finder
- *   - row/column timing patterns
- *   - a scalable bottom-right format band (1/2/3 BCH blocks per copy)
- *   - a central calibration hub (gray ramp + endpoints + palette samples)
+ * Function patterns are black/white and independent of the data palette.
+ * The calibration hub contains:
+ *   - a 4x4 reference gray ramp (16 equal-L* grays) as fixed RGB colours;
+ *   - a compact grid of data-palette samples (for colour layers);
+ *   - black/white endpoint cells on the hub border.
  *
  * Data modules use a Hilbert curve order filtered to the data cells.
  */
@@ -28,7 +23,6 @@ function nextPowerOfTwo(n) {
   return p;
 }
 
-/** Hilbert d -> (x,y) for a power-of-two grid. */
 export function hilbertD2XY(n, d) {
   let t = d;
   let x = 0;
@@ -63,26 +57,23 @@ export function hilbertOrder(n) {
 }
 
 export function calibrationSampleCount(layerName, N) {
-  if (layerName === 'L1' || layerName === 'L2') return 0;
-  if (layerName === 'L3a') return N < 33 ? 16 : 64;
-  if (layerName === 'L3b') return N < 33 ? 16 : N < 57 ? 64 : 256;
-  throw new Error(`Unknown layer: ${layerName}`);
+  const layer = LAYERS[layerName];
+  if (!layer || layerName === 'L1') return 0;
+  if (layer.kind === 'gray') return 0;
+  if (layerName === 'L3c') return 16;
+  if (layerName === 'L3d') return N < 33 ? 16 : 32;
+  if (layerName === 'L4e') return N < 33 ? 16 : N < 57 ? 32 : 64;
+  if (layerName === 'L4f') return N < 33 ? 16 : N < 57 ? 64 : 256;
+  return 0;
 }
 
-export function calibrationSampleIndices(layerName, N, paletteInfo = null) {
-  const layer = LAYERS[layerName];
+export function calibrationSampleIndices(layerName, N, paletteInfo) {
   const count = calibrationSampleCount(layerName, N);
   if (count === 0) return [];
-  const palette = paletteInfo?.paletteLab ?? null;
-  if (!palette || palette.length === 0) {
-    return Array.from({ length: Math.min(count, layer.paletteSize) }, (_, i) => i);
-  }
+  const palette = paletteInfo?.paletteLab;
+  if (!palette || palette.length === 0) return [];
   if (count >= palette.length) return Array.from({ length: palette.length }, (_, i) => i);
 
-  // Farthest-point sampling in CIELAB.  Small versions have only a 4x4
-  // palette block; selecting the 16 grays would leave the colour axes
-  // completely uncalibrated.  Starting with black/white and then picking the
-  // most distant colour gives usable chroma information in the same area.
   const selected = [];
   const used = new Uint8Array(palette.length);
   const pick = (idx) => {
@@ -90,7 +81,7 @@ export function calibrationSampleIndices(layerName, N, paletteInfo = null) {
     used[idx] = 1;
   };
   pick(0);
-  if (palette.length > 15) pick(15);
+  if (palette.length > 1) pick(1);
   while (selected.length < count) {
     let best = -1;
     let bestD = -1;
@@ -118,20 +109,41 @@ function finderCell(r, c) {
   return WHITE;
 }
 
-export function makeLayout({ version, layer: layerName, paletteMode = 'bucketed', harmony = false, paletteInfo = null }) {
+export function makeLayout({
+  version,
+  layer: layerName,
+  paletteMode = 'maxmin',
+  harmony = false,
+  paletteInfo = null,
+}) {
   const layer = LAYERS[layerName];
   if (!layer) throw new Error(`Unknown layer: ${layerName}`);
   const palette = paletteInfo ?? generatePalette(layerName, { mode: paletteMode, harmony });
   const N = versionToSize(version);
-  const blackSym = 0;
-  const whiteSym = layerName === 'L1' ? 1 : 15;
+  const blackSym = palette.blackIndex;
+  const whiteSym = palette.whiteIndex;
+
   const mask = new Uint8Array(N * N);
   const fixed = new Int16Array(N * N).fill(-1);
-  const set = (r, c, symbol) => {
+  const fixedColor = new Uint8Array(N * N * 3);
+  const hasFixedColor = new Uint8Array(N * N);
+
+  const setSymbol = (r, c, symbol) => {
     if (r < 0 || r >= N || c < 0 || c >= N) return;
     const i = r * N + c;
     mask[i] = 1;
     fixed[i] = symbol;
+    hasFixedColor[i] = 0;
+  };
+  const setColor = (r, c, rgb) => {
+    if (r < 0 || r >= N || c < 0 || c >= N) return;
+    const i = r * N + c;
+    mask[i] = 1;
+    fixed[i] = -1;
+    hasFixedColor[i] = 1;
+    fixedColor[i * 3] = rgb[0];
+    fixedColor[i * 3 + 1] = rgb[1];
+    fixedColor[i * 3 + 2] = rgb[2];
   };
 
   // --- finders + separators -------------------------------------------------
@@ -141,62 +153,55 @@ export function makeLayout({ version, layer: layerName, paletteMode = 'bucketed'
     { row: N - 7, col: 0 },
   ];
   for (const f of finders) {
-    // separator (8x8) is white
     for (let r = 0; r < 8; r++) {
       for (let c = 0; c < 8; c++) {
         const rr = f.row === 0 ? r : N - 8 + r;
         const cc = f.col === 0 ? c : N - 8 + c;
-        set(rr, cc, whiteSym);
+        setSymbol(rr, cc, whiteSym);
       }
     }
-    // 7x7 finder
     for (let r = 0; r < 7; r++) {
       for (let c = 0; c < 7; c++) {
-        set(f.row + r, f.col + c, finderCell(r, c) === BLACK ? blackSym : whiteSym);
+        setSymbol(f.row + r, f.col + c, finderCell(r, c) === BLACK ? blackSym : whiteSym);
       }
     }
   }
 
   // --- timing patterns ------------------------------------------------------
-  for (let c = 8; c <= N - 9; c++) set(6, c, c % 2 === 0 ? blackSym : whiteSym);
-  for (let r = 8; r <= N - 9; r++) set(r, 6, r % 2 === 0 ? blackSym : whiteSym);
+  for (let c = 8; c <= N - 9; c++) setSymbol(6, c, c % 2 === 0 ? blackSym : whiteSym);
+  for (let r = 8; r <= N - 9; r++) setSymbol(r, 6, r % 2 === 0 ? blackSym : whiteSym);
 
   // --- alignment + format band ---------------------------------------------
-  const formatBlocks = N < 33 ? 1 : N < 57 ? 2 : 3;
+  const formatBlocks = N < 25 ? 1 : N < 57 ? 2 : 3;
   const formatRowsPerCopy = formatBlocks * 2;
   const formatCols = 8;
   const formatCopies = [];
   let alignment = null;
 
   if (N >= 25) {
-    // 5x5 alignment ring at the bottom-right corner, with a 1-module white
-    // border.  Its centre is the fourth homography point for camera photos.
     const base = N - 7;
     for (let r = 0; r < 7; r++) {
-      for (let c = 0; c < 7; c++) set(base + r, base + c, whiteSym);
+      for (let c = 0; c < 7; c++) setSymbol(base + r, base + c, whiteSym);
     }
     for (let r = 0; r < 5; r++) {
       for (let c = 0; c < 5; c++) {
         const black = r === 0 || r === 4 || c === 0 || c === 4 || (r === 2 && c === 2);
-        set(base + 1 + r, base + 1 + c, black ? blackSym : whiteSym);
+        setSymbol(base + 1 + r, base + 1 + c, black ? blackSym : whiteSym);
       }
     }
     alignment = { row: base, col: base, size: 7, centerRow: N - 3.5, centerCol: N - 3.5 };
 
-    // Format copies near the top-right and bottom-left finders.
     formatCopies.push({ row0: 8, col0: N - formatCols, rows: formatRowsPerCopy, cols: formatCols });
     formatCopies.push({ row0: N - 8, col0: 8, rows: formatRowsPerCopy, cols: formatCols });
   } else {
-    // Small versions keep two stacked copies at the bottom-right.
     for (let copy = 0; copy < 2; copy++) {
       const row0 = N - (2 - copy) * formatRowsPerCopy;
       formatCopies.push({ row0, col0: N - formatCols, rows: formatRowsPerCopy, cols: formatCols });
     }
   }
-
   for (const copy of formatCopies) {
     for (let r = 0; r < copy.rows; r++) {
-      for (let c = 0; c < copy.cols; c++) set(copy.row0 + r, copy.col0 + c, whiteSym);
+      for (let c = 0; c < copy.cols; c++) setSymbol(copy.row0 + r, copy.col0 + c, whiteSym);
     }
   }
 
@@ -207,7 +212,7 @@ export function makeLayout({ version, layer: layerName, paletteMode = 'bucketed'
   const endpointBlocks = [];
   if (layerName !== 'L1') {
     const paletteCount = calibrationSampleCount(layerName, N);
-    const paletteSide = paletteCount === 0 ? 0 : Math.round(Math.sqrt(paletteCount));
+    const paletteSide = paletteCount === 0 ? 0 : Math.ceil(Math.sqrt(paletteCount));
     const graySide = 4;
     const hubW = graySide + paletteSide + 2;
     const hubH = Math.max(graySide, paletteSide) + 2;
@@ -215,34 +220,40 @@ export function makeLayout({ version, layer: layerName, paletteMode = 'bucketed'
     const hubCol = Math.floor((N - hubW) / 2);
     hub = { row: hubRow, col: hubCol, w: hubW, h: hubH };
 
-    // Border endpoints: corners black, other border cells white.
     for (let r = 0; r < hubH; r++) {
       for (let c = 0; c < hubW; c++) {
         const edge = r === 0 || r === hubH - 1 || c === 0 || c === hubW - 1;
         if (!edge) continue;
         const corner = (r === 0 || r === hubH - 1) && (c === 0 || c === hubW - 1);
         const symbol = corner ? blackSym : whiteSym;
-        set(hubRow + r, hubCol + c, symbol);
+        setSymbol(hubRow + r, hubCol + c, symbol);
         endpointBlocks.push({ row: hubRow + r, col: hubCol + c, symbol });
       }
     }
 
-    // Gray ramp: 4x4, indices 0..15.
+    // 16 reference gray blocks (fixed RGB, independent of the data palette).
     for (let i = 0; i < 16; i++) {
       const r = hubRow + 1 + Math.floor(i / graySide);
       const c = hubCol + 1 + (i % graySide);
-      set(r, c, i);
-      grayBlocks.push({ row: r, col: c, symbol: i });
+      const rgb = palette.grayPalette[i];
+      setColor(r, c, rgb);
+      grayBlocks.push({ row: r, col: c, rgb });
     }
 
-    // Palette samples.
     if (paletteSide > 0) {
       const indices = calibrationSampleIndices(layerName, N, palette);
       for (let i = 0; i < indices.length; i++) {
         const r = hubRow + 1 + Math.floor(i / paletteSide);
         const c = hubCol + 1 + graySide + (i % paletteSide);
-        set(r, c, indices[i]);
-        paletteBlocks.push({ row: r, col: c, symbol: indices[i] });
+        const symbol = indices[i];
+        setSymbol(r, c, symbol);
+        paletteBlocks.push({ row: r, col: c, symbol, rgb: palette.palette[symbol] });
+      }
+      // Remaining cells in the palette rectangle stay white function modules.
+      for (let i = indices.length; i < paletteSide * paletteSide; i++) {
+        const r = hubRow + 1 + Math.floor(i / paletteSide);
+        const c = hubCol + 1 + graySide + (i % paletteSide);
+        setSymbol(r, c, whiteSym);
       }
     }
   }
@@ -262,8 +273,11 @@ export function makeLayout({ version, layer: layerName, paletteMode = 'bucketed'
     N,
     layer: layerName,
     paletteMode,
+    harmony,
     mask,
     fixed,
+    fixedColor,
+    hasFixedColor,
     dataCoords,
     functionCount,
     dataCount: dataCoords.length,

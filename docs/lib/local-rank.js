@@ -8,7 +8,7 @@
  * gray levels.
  */
 
-export function localRankSymbols({ layout, rgbSamples, window = 3 }) {
+export function localRankSymbols({ layout, rgbSamples, window = 3, levels = 16 }) {
   const N = layout.N;
   const D = layout.dataCoords.length;
   const lum = new Float64Array(D);
@@ -99,14 +99,14 @@ export function localRankSymbols({ layout, rgbSamples, window = 3 }) {
     }
     const p = residuals.length > 1 ? lo / (residuals.length - 1) : 0.5;
     percentiles[i] = p;
-    symbols[i] = Math.max(0, Math.min(15, Math.round(p * 15)));
+    symbols[i] = Math.max(0, Math.min(levels - 1, Math.round(p * (levels - 1))));
   }
 
   const costs = new Array(D);
   for (let i = 0; i < D; i++) {
-    const target = percentiles[i] * 15;
-    const c = new Float64Array(16);
-    for (let j = 0; j < 16; j++) c[j] = (target - j) ** 2;
+    const target = percentiles[i] * (levels - 1);
+    const c = new Float64Array(levels);
+    for (let j = 0; j < levels; j++) c[j] = (target - j) ** 2;
     costs[i] = c;
   }
 

@@ -24,14 +24,14 @@ for (const item of texts) {
   const bytes = Buffer.byteLength(text, 'utf8');
   for (const size of [1024, 2048]) {
     const result = encode(text, {
-      layer: 'L3b',
+      layer: 'L4f',
       width: size,
       height: size,
       mode: 'fill',
       maxModulePx: 32,
       constraint: false,
     });
-    const file = path.join(outDir, `${item.name}_L3b_${size}.png`);
+    const file = path.join(outDir, `${item.name}_L4f_${size}.png`);
     const png = encodePNG(result.image);
     fs.writeFileSync(file, png);
     const decoded = decodeAuto(decodePNG(png));

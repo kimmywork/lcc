@@ -48,10 +48,10 @@ Usage:
     --input <text>         text payload
     --input-file <path>    read payload from file (UTF-8)
     --output <path>        output PNG (required)
-    --layer <L1|L2|L3a|L3b>  default L2
+    --layer <L1|L2a|L2b|L3c|L3d|L4e|L4f>  default L1
     --size <px>            canvas side, default 1024
     --mode <fill|compact>  default fill
-    --palette <bucketed|global>  default bucketed
+    --palette <maxmin|harmony>  default maxmin
     --constraint           enable reversible constraint (default on for L2/L3)
     --no-constraint        disable constraint (recommended for camera)
     --seed <0..63>         whitening seed, default 0
@@ -67,7 +67,7 @@ function cmdEncode(args) {
   if (args['input-file']) payload = fs.readFileSync(args['input-file'], 'utf8');
   else if (args.input !== undefined) payload = String(args.input);
   else throw new Error('encode: provide --input or --input-file');
-  const layer = args.layer ?? 'L2';
+  const layer = args.layer ?? 'L1';
   if (!LAYERS[layer]) throw new Error(`unknown layer: ${layer}`);
   const size = Number(args.size ?? 1024);
   const constraint = args.constraint === false ? false : args.constraint === true ? true : undefined;
@@ -76,7 +76,7 @@ function cmdEncode(args) {
     width: size,
     height: size,
     mode: args.mode ?? 'fill',
-    paletteMode: args.palette ?? 'bucketed',
+    paletteMode: args.palette ?? 'maxmin',
     constraint,
     seed: Number(args.seed ?? 0),
     maxModulePx: 32,
@@ -108,7 +108,7 @@ function cmdDecode(args) {
 
 function cmdInfo() {
   for (const layer of Object.values(LAYERS)) {
-    console.log(`${layer.name}: ${layer.paletteSize} symbols, ${layer.bitsPerModule} bit/module, ECC ${(layer.ecc * 100).toFixed(0)}%`);
+    console.log(`${layer.name}: ${layer.paletteSize} symbols, ${layer.bitsPerModule} bit/module, ECC ${(layer.ecc * 100).toFixed(0)}%, ${layer.description}`);
   }
 }
 
