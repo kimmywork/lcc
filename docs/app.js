@@ -72,7 +72,8 @@ function friendlyError(error) {
       return `检测到 ${meta.layer} 码，但纠错失败：请靠近、保持清晰、避开反光。`;
     }
     if (meta.layer === 'L2b') {
-      return '检测到 L2b（8 灰）；屏幕反光下可能丢灰阶。建议改用 L2a（4 灰）或 L3c（16 色）+ constraint off。';
+      const c = meta.constraint ? '，且开启了 constraint' : '';
+      return `L2b 是支持的；这次是真实纠错失败（检测到 L2b 8 灰${c}）。8 灰间距较小，强反光/摩尔纹下容易跨级；请换角度/靠近，或改用 L2a（4 灰）或 L3c（16 色）+ constraint off。`;
     }
     const extra = meta.constraint ? '，且开启了 constraint' : '';
     return `检测到 ${meta.layer} 多级色码${extra}；摄像头建议 L3c/L3d，L4e/L4f 仅用于清洁/数字/打印。`;

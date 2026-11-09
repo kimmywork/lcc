@@ -22,6 +22,12 @@ const demos = [
     options: { width: 512, height: 512, mode: 'fill', maxModulePx: 32, constraint: false },
   },
   {
+    name: 'demo_L2b',
+    layer: 'L2b',
+    text: 'LCC demo · L2b 8-level gray · 你好，分层彩色码！',
+    options: { width: 512, height: 512, mode: 'fill', maxModulePx: 32, constraint: false },
+  },
+  {
     name: 'demo_L3c',
     layer: 'L3c',
     text: 'https://example.com/lcc?layer=L3c&demo=1',

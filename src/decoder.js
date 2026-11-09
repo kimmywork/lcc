@@ -262,96 +262,106 @@ export function decode(image, options = {}) {
     threshold: det.threshold,
   });
 
-  let symbols = new Array(layout.dataCount);
+  const symbolsCal = new Array(layout.dataCount);
   const rgbSamples = new Array(layout.dataCount);
   for (let i = 0; i < layout.dataCoords.length; i++) {
     const [r, c] = layout.dataCoords[i];
     const rgb = sampler(r, c);
     rgbSamples[i] = rgb;
-    symbols[i] = calibrator.classify(rgb);
-  }
-
-  let localRankCosts = null;
-  if (options.localRank === true && layerName !== 'L1' && paletteInfo.kind === 'gray') {
-    const lr = localRankSymbols({ layout, rgbSamples, levels: paletteInfo.paletteSize });
-    symbols = Array.from(lr.symbols);
-    localRankCosts = lr.costs;
+    symbolsCal[i] = calibrator.classify(rgb);
   }
 
   const errorMeta = { layer: layerName, version, N: layout.N, paletteMode, constraint, seed };
-  let writer;
-  let capacityBits;
-  if (layerName === 'L1') {
-    writer = new BitWriter();
-    for (const s of symbols) writer.writeBit(s & 1);
-    capacityBits = layout.dataCount;
-  } else if (constraint) {
-    const rc = new RankConstraint(paletteInfo);
-    let corrected = symbols;
-    if (localRankCosts) {
-      corrected = viterbiCorrect(localRankCosts, paletteInfo, rc.initialRank);
-    } else if (typeof calibrator.costs === 'function') {
-      const costs = new Array(layout.dataCount);
-      for (let i = 0; i < rgbSamples.length; i++) costs[i] = calibrator.costs(rgbSamples[i]);
-      corrected = viterbiCorrect(costs, paletteInfo, rc.initialRank);
+
+  const attempt = (symbols, costs, calibrationType) => {
+    let writer;
+    let capacityBits;
+    if (layerName === 'L1') {
+      writer = new BitWriter();
+      for (const s of symbols) writer.writeBit(s & 1);
+      capacityBits = layout.dataCount;
+    } else if (constraint) {
+      const rc = new RankConstraint(paletteInfo);
+      let corrected = symbols;
+      let useCosts = costs;
+      if (!useCosts && typeof calibrator.costs === 'function') {
+        useCosts = rgbSamples.map((rgb) => calibrator.costs(rgb));
+      }
+      if (useCosts) corrected = viterbiCorrect(useCosts, paletteInfo, rc.initialRank);
+      try {
+        writer = rc.decode(corrected, { lenient: true });
+      } catch (e) {
+        e.lccMeta = errorMeta;
+        throw e;
+      }
+      capacityBits = rc.capacityBitsForModules(layout.dataCount);
+    } else {
+      const bitsPerModule = LAYERS[layerName].bitsPerModule;
+      writer = new BitWriter();
+      for (const s of symbols) writer.writeBits(s, bitsPerModule);
+      capacityBits = layout.dataCount * bitsPerModule;
     }
+
+    const S = Math.floor(capacityBits / 8);
+    if (S <= 0) throw new Error('LCC decode: no RS symbols');
+    const bitBytes = writer.toBytes();
+    const rsReceived = bitBytes.slice(0, S);
+    const ecc = ECC_LEVELS[fmt.eccIndex] ?? LAYERS[layerName].ecc;
+    let rs;
     try {
-      writer = rc.decode(corrected, { lenient: true });
+      rs = rsDecodeBlocks(rsReceived, ecc);
     } catch (e) {
       e.lccMeta = errorMeta;
       throw e;
     }
-    capacityBits = rc.capacityBitsForModules(layout.dataCount);
-  } else {
-    const bitsPerModule = LAYERS[layerName].bitsPerModule;
-    writer = new BitWriter();
-    for (const s of symbols) writer.writeBits(s, bitsPerModule);
-    capacityBits = layout.dataCount * bitsPerModule;
-  }
+    const frameBytes = makeWhitening(seed)(rs.data);
+    let frame;
+    try {
+      frame = parseFrame(frameBytes);
+    } catch (e) {
+      e.lccMeta = errorMeta;
+      throw e;
+    }
 
-  const S = Math.floor(capacityBits / 8);
-  if (S <= 0) throw new Error('LCC decode: no RS symbols');
-  const bitBytes = writer.toBytes();
-  const rsReceived = bitBytes.slice(0, S);
-  const ecc = ECC_LEVELS[fmt.eccIndex] ?? LAYERS[layerName].ecc;
-  let rs;
-  try {
-    rs = rsDecodeBlocks(rsReceived, ecc);
-  } catch (e) {
-    e.lccMeta = errorMeta;
-    throw e;
-  }
-  const frameBytes = makeWhitening(seed)(rs.data);
-  let frame;
-  try {
-    frame = parseFrame(frameBytes);
-  } catch (e) {
-    e.lccMeta = errorMeta;
-    throw e;
-  }
-
-  return {
-    payload: frame.payload,
-    text: decodeText(frame.payload),
-    meta: {
-      layer: layerName,
-      version,
-      N: layout.N,
-      moduleSize: det.s,
-      paletteMode,
-      harmony,
-      constraint,
-      seed,
-      ecc,
-      dataCount: layout.dataCount,
-      capacityBits,
-      rsSymbols: S,
-      correctedSymbols: rs.corrected,
-      calibration: calibrator.type,
-      flags: frame.flags,
-    },
-    detection: det,
+    return {
+      payload: frame.payload,
+      text: decodeText(frame.payload),
+      meta: {
+        layer: layerName,
+        version,
+        N: layout.N,
+        moduleSize: det.s,
+        paletteMode,
+        harmony,
+        constraint,
+        seed,
+        ecc,
+        dataCount: layout.dataCount,
+        capacityBits,
+        rsSymbols: S,
+        correctedSymbols: rs.corrected,
+        calibration: calibrationType,
+        flags: frame.flags,
+      },
+      detection: det,
+    };
   };
+
+  try {
+    return attempt(symbolsCal, null, calibrator.type);
+  } catch (firstError) {
+    if (!firstError.lccMeta) firstError.lccMeta = errorMeta;
+    if (layerName !== 'L1' && paletteInfo.kind === 'gray') {
+      const lr = localRankSymbols({ layout, rgbSamples, levels: paletteInfo.paletteSize });
+      try {
+        return attempt(Array.from(lr.symbols), lr.costs, 'local-rank');
+      } catch (secondError) {
+        if (!secondError.lccMeta) secondError.lccMeta = errorMeta;
+        throw secondError;
+      }
+    }
+    throw firstError;
+  }
 }
 
 export function decodeAuto(image, options = {}) {

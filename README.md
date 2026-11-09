@@ -28,6 +28,7 @@
 | L4f（256 色） | 13.7 |
 
 > 16 色比 16 灰更稳，是因为彩色是三维空间；64/256 色太密，只适合清洁/数字/打印。
+> 灰度层的校准枢纽显示该层自身的 4/8 级灰；彩色层才使用 16 级参考灰。
 
 ## 特性
 
@@ -106,6 +107,7 @@ Web 版在 `docs/`：
 | 示例 | 图像 | 说明 |
 | --- | --- | --- |
 | L2a 短文本 | ![demo_L2a](demo_outputs/demo_L2a.png) | 4 级灰，摄像头友好 |
+| L2b 短文本 | ![demo_L2b](demo_outputs/demo_L2b.png) | 8 级灰，枢纽也显示 8 级 |
 | L3c 短 URL | ![demo_L3c](demo_outputs/demo_L3c.png) | 16 色，min ΔE ≈ 49 |
 | 心经 | ![心经](demo_outputs/心经_L4f_2048.png) | 944B，L4f |
 | 金刚经 | ![金刚经](demo_outputs/金刚经_L4f_2048.png) | 20406B，L4f |

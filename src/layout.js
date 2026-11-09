@@ -213,7 +213,9 @@ export function makeLayout({
   if (layerName !== 'L1') {
     const paletteCount = calibrationSampleCount(layerName, N);
     const paletteSide = paletteCount === 0 ? 0 : Math.ceil(Math.sqrt(paletteCount));
-    const graySide = 4;
+    const grayLevels = layer.kind === 'gray' ? layer.levels : 16;
+    const graySide = Math.ceil(Math.sqrt(grayLevels));
+    const grayColors = layer.kind === 'gray' ? palette.palette : palette.grayPalette;
     const hubW = graySide + paletteSide + 2;
     const hubH = Math.max(graySide, paletteSide) + 2;
     const hubRow = Math.floor((N - hubH) / 2);
@@ -231,11 +233,12 @@ export function makeLayout({
       }
     }
 
-    // 16 reference gray blocks (fixed RGB, independent of the data palette).
-    for (let i = 0; i < 16; i++) {
+    // Gray layers show the data's own 4/8 levels; colour layers use a
+    // 16-level reference ramp for luminance anchoring.
+    for (let i = 0; i < grayLevels; i++) {
       const r = hubRow + 1 + Math.floor(i / graySide);
       const c = hubCol + 1 + (i % graySide);
-      const rgb = palette.grayPalette[i];
+      const rgb = grayColors[i];
       setColor(r, c, rgb);
       grayBlocks.push({ row: r, col: c, rgb });
     }
