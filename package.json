@@ -9,10 +9,11 @@
   },
   "scripts": {
     "test": "node --test",
-    "demo": "node examples/demo.js",
+    "demo": "node examples/text-examples.js",
     "cli": "node src/cli.js",
     "build:web": "node scripts/build-web.js",
-    "web": "node scripts/serve-web.js"
+    "web": "node scripts/serve-web.js",
+    "qr:examples": "python3 scripts/make-qr-examples.py"
   },
   "engines": {
     "node": ">=18"

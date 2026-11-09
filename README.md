@@ -1,7 +1,11 @@
 # LCC — Layered Chromatic Code
 
-> 方形、分层、按信道能力换符号表的二维图形码参考实现。
-> 旧 HLC（Hexagonal Layered Code）六边形实现已删除，设计文档见 [LCC 规范](docs/lcc-spec.md)。
+> ⚠️ **测试阶段警告**
+>
+> LCC 目前是研究 / 参考实现，**编码格式、层表、色板、格式带、约束方案随时可能完全更改**。
+> 请不要用于生产、长期存档、支付、身份凭证或任何不可恢复的数据。请谨慎使用。
+
+LCC 是一套方形、分层、按信道能力换符号表的二维图形码。旧 HLC（Hexagonal Layered Code）六边形实现已删除，设计文档见 [LCC 规范](docs/lcc-spec.md)。
 
 ## 层级
 
@@ -30,6 +34,53 @@
 > 16 色比 16 灰更稳，是因为彩色是三维空间；64/256 色太密，只适合清洁/数字/打印。
 > 灰度层的校准枢纽显示该层自身的 4/8 级灰；彩色层才使用 16 级参考灰。
 
+## 快速开始
+
+需要 Node.js ≥ 18。
+
+```bash
+npm run demo                 # 生成下面 5 个文本示例
+npm test                     # 测试
+npm run build:web            # 复制浏览器核心到 docs/lib
+npm run web                  # http://localhost:8080
+```
+
+QR 对比图用 [segno](https://pypi.org/project/segno/) 生成，仅用于文档，不是 LCC 依赖：
+
+```bash
+python3 -m pip install segno
+npm run qr:examples
+```
+
+## 示例
+
+下面 5 个文本使用不同的 LCC 层；QRCode 列使用相同文本、error level M 生成。  
+**金刚经数据量过大，不展示 QRCode**，这正是 L4f 容量优势的场景。
+
+| 文本 | 大小 | LCC | QRCode | 说明 |
+| --- | ---: | --- | --- | --- |
+| **Hello World!** | 12 B | <img src="demo_outputs/hello_world_L1.png" width="170"><br>L1 · v2 / N=25 · 17px | <img src="demo_outputs/qr_hello_world.png" width="170"><br>QR v1 · 21×21 | 最小黑白码 |
+| **The quick brown fox jumps over the lazy dog.** | 44 B | <img src="demo_outputs/quick_brown_fox_L2a.png" width="170"><br>L2a · v2 / N=25 · 17px | <img src="demo_outputs/qr_quick_brown_fox.png" width="170"><br>QR v4 · 33×33 | 4 级灰，摄像头友好 |
+| **Lorem ipsum**（完整段落） | 446 B | <img src="demo_outputs/lorem_ipsum_L3c.png" width="170"><br>L3c · v7 / N=45 · 20px | <img src="demo_outputs/qr_lorem_ipsum.png" width="170"><br>QR v16 · 81×81 | 16 色，min ΔE ≈ 49 |
+| **心经** | 944 B | <img src="demo_outputs/heart_sutra_L3d.png" width="170"><br>L3d · v10 / N=57 · 16px | <img src="demo_outputs/qr_heart_sutra.png" width="170"><br>QR v25 · 117×117 | 32 色，受控拍摄 |
+| **金刚经** | 20406 B | <img src="demo_outputs/diamond_sutra_L4f.png" width="170"><br>L4f · v45 / N=197 · 10px | 不展示（20 KB，QR 会非常密） | 256 色，清洁/数字/打印 |
+
+## LCC vs QRCode
+
+| 维度 | LCC | QRCode |
+| --- | --- | --- |
+| 模块 / 符号 | 方形；L1–L4f，1–8 bit/模块 | 黑白二值，1 bit/模块 |
+| 颜色 | L3c/L3d/L4e/L4f 彩色 | 单色 |
+| 定位图案 | `1:2:1:2:1` 自定义方环 | `1:1:3:1:1` |
+| 校准 | 灰阶/色板校准枢纽 | 无（二值阈值） |
+| 纠错 | RS(GF256) + BCH 格式带 + CRC32 | RS + 格式信息 |
+| 容量 | 彩色层更高；L4f 可放 20 KB 文本 | 单色，容量较低 |
+| 摄像头 | L1/L2a/L3c 可用；多级受反光/削顶影响 | 极成熟，全球通用 |
+| 生态 | 测试阶段，无通用扫描器 | ISO/IEC 18004，所有手机支持 |
+| 稳定性 | 方案可能完全更改 | 稳定标准 |
+
+> LCC 的彩色层是“用色板间距换容量”：16 色可以比 16 灰更稳，但 64/256 色在摄像头下会迅速变差。QR 用二值换取通用性和鲁棒性。
+
 ## 特性
 
 - **方形动态版本**：`N = 21 + 4(v-1)`，`v=1..100`；最小模块 4px，fill 模式自动铺满画布。
@@ -41,18 +92,6 @@
 - **max-min ΔE 色板**：16/32/64/256 色，最小 ΔE 可测。
 - **QR 式预处理**：Otsu / Bradley 自适应阈值、闭运算、多假设重试、V 通道 finder 检测、四锚点单应、局部光照归一化、Viterbi 约束修正。
 - **零运行时依赖**：Node 端只用内置 `zlib`；浏览器端只用 Canvas。
-
-## 快速开始
-
-需要 Node.js ≥ 18。
-
-```bash
-npm run demo                 # L2a + L3c demo
-node examples/encode-sutras.js  # 心经/金刚经 L4f 示例
-npm test                     # 测试
-npm run build:web            # 复制浏览器核心到 docs/lib
-npm run web                  # http://localhost:8080
-```
 
 ## CLI
 
@@ -102,19 +141,6 @@ Web 版在 `docs/`：
 - **摄像头彩色**：L3c + constraint off。
 - 示例按钮：心经/金刚经使用 L4f（高容量）。
 
-## 示例
-
-| 示例 | 图像 | 说明 |
-| --- | --- | --- |
-| L2a 短文本 | ![demo_L2a](demo_outputs/demo_L2a.png) | 4 级灰，摄像头友好 |
-| L2b 短文本 | ![demo_L2b](demo_outputs/demo_L2b.png) | 8 级灰，枢纽也显示 8 级 |
-| L3c 短 URL | ![demo_L3c](demo_outputs/demo_L3c.png) | 16 色，min ΔE ≈ 49 |
-| 心经 | ![心经](demo_outputs/心经_L4f_2048.png) | 944B，L4f |
-| 金刚经 | ![金刚经](demo_outputs/金刚经_L4f_2048.png) | 20406B，L4f |
-| 摄像头模拟 | ![camera_simulation](demo_outputs/camera_simulation.png) | 透视 + 色偏，L3c |
-
-关于 finder 开销：三个 finder 固定 192 模块。N=21 时占 43.5%，N=57 时 5.9%，N=197 时 0.5%。小 demo 看起来 finder 很大，是因为 fill 模式为了让小数据铺满画布选了很小的 N。
-
 ## 摄像头建议
 
 - **L1 / L2a / L3c**：首选。
@@ -128,7 +154,7 @@ Web 版在 `docs/`：
 ```
 src/
   encoder.js         编码管线
-  decoder.js         轴对齐 + 自动解码
+  decoder.js         轴对齐 + 自动解码 + 灰度多假设
   detector.js        透视检测 / 单应
   preprocess.js      Otsu / 自适应阈值 / 闭运算 / 多假设
   illumination.js    finder/alignment 黑白云模型
@@ -141,9 +167,9 @@ src/
   png.js             Node PNG I/O
   index.js           公共 API
 docs/                Web 版 + LCC 规范
-examples/            demo 与文本示例
-demo_outputs/        生成的示例码面
-scripts/             build:web / 本地静态服务
+examples/            文本示例与 Lorem 文本
+demo_outputs/        LCC 示例图 + QR 对比图
+scripts/             build:web / 本地静态服务 / QR 对比图
 ```
 
 ## 已知限制
@@ -154,6 +180,7 @@ scripts/             build:web / 本地静态服务
 - 多帧/喷泉码尚未实现。
 - 打印链路未实测；真实打印需要逐机校准。
 - 不做 QR 兼容；finder 比例 1:2:1:2:1。
+- 当前处于测试阶段，格式可能完全更改。
 
 ## 许可证
 
