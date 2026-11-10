@@ -77,7 +77,7 @@ function shapeSegmentsPx(shapeIndex, size, inset) {
   const lo = inset;
   const hi = size - inset;
   const mid = size / 2;
-  const squareInset = Math.max(inset, Math.round(size / 8));
+  const squareInset = Math.max(inset, Math.round(size / 4));
   const slo = squareInset;
   const shi = size - squareInset;
   switch (shapeIndex) {
@@ -369,7 +369,7 @@ export function shapeSegmentsNormalized(shapeIndex, inset = 1 / 16) {
   const lo = inset;
   const hi = 1 - inset;
   const mid = 0.5;
-  const squareInset = Math.max(inset, 1 / 8);
+  const squareInset = Math.max(inset, 1 / 4);
   const slo = squareInset;
   const shi = 1 - squareInset;
   switch (shapeIndex) {

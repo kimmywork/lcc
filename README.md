@@ -70,7 +70,8 @@ LCC 是一套方形、分层、按信道能力换符号表的二维图形码。�
 需要 Node.js ≥ 18。
 
 ```bash
-npm run demo                 # 生成下面 5 个文本示例
+npm run demo                 # 生成下面 5 个基础文本示例
+npm run shape:examples       # 生成前 4 个文本的形状层示例
 npm test                     # 测试
 npm run build:web            # 复制浏览器核心到 docs/lib
 npm run web                  # http://localhost:8080
@@ -96,6 +97,24 @@ npm run qr:examples
 | **心经** | 944 B | <img src="demo_outputs/heart_sutra_L3d.png" width="170"><br>L3d · v10 / N=57 · 16px · ECC H | <img src="demo_outputs/qr_heart_sutra.png" width="170"><br>QR v25 · 117×117 | 32 色，受控拍摄 |
 | **金刚经** | 20406 B | <img src="demo_outputs/diamond_sutra_L4f.png" width="170"><br>L4f · v45 / N=197 · 10px · ECC H | 不展示（20 KB，QR 会非常密） | 256 色，清洁/数字/打印 |
 
+## 形状层示例
+
+下面 4 个文本使用带图案的形状层；图案为 `blank / \ X + - | □` 之一，每个模块额外 3 bit。  
+前四个基础示例都有对应的形状版本，全部 `decoded=OK corrected=0`。金刚经 20 KB 仍用 L4f（L3t 7-bit 在 2048/16px 下容量不足）。
+
+| 文本 | 大小 | 形状层 | 图案 |
+| --- | ---: | --- | --- |
+| **Hello World!** | 12 B | <img src="demo_outputs/hello_world_L1s.png" width="170"><br>L1s · v2 / N=25 · 17px · 4 bit | 黑白 + 8 形态 |
+| **The quick brown fox jumps over the lazy dog.** | 44 B | <img src="demo_outputs/quick_brown_fox_L2s.png" width="170"><br>L2s · v2 / N=25 · 17px · 5 bit | 4 灰 + 8 形态 |
+| **Lorem ipsum**（完整段落） | 446 B | <img src="demo_outputs/lorem_ipsum_L3s.png" width="170"><br>L3s · v5 / N=37 · 24px · 6 bit | 8 色 + 8 形态 |
+| **心经** | 944 B | <img src="demo_outputs/heart_sutra_L3t.png" width="170"><br>L3t · v8 / N=49 · 19px · 7 bit | 16 色 + 8 形态 |
+
+生成：
+
+```bash
+npm run shape:examples
+```
+
 ## LCC vs QRCode
 
 | 维度 | LCC | QRCode |
@@ -107,7 +126,7 @@ npm run qr:examples
 | 纠错 | RS(GF256) + BCH 格式带 + CRC32；L/M/Q/H + Boost | RS + 格式信息；L/M/Q/H |
 | 输出 | PNG / SVG | Bitmap / Vector |
 | 容量 | 彩色层更高；L4f 可放 20 KB 文本 | 单色，容量较低 |
-| 摄像头 | L1/L2a/L3c 可用；多级受反光/削顶影响 | 极成熟，全球通用 |
+| 摄像头 | L1/L2a/L3b/L3c/L3s 可用；形状层需更大模块；多级受反光/削顶影响 | 极成熟，全球通用 |
 | 生态 | 测试阶段，无通用扫描器 | ISO/IEC 18004，所有手机支持 |
 | 稳定性 | 方案可能完全更改 | 稳定标准 |
 

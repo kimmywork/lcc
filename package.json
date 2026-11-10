@@ -10,6 +10,7 @@
   "scripts": {
     "test": "node --test",
     "demo": "node examples/text-examples.js",
+    "shape:examples": "node examples/shape-examples.js",
     "cli": "node src/cli.js",
     "build:web": "node scripts/build-web.js",
     "web": "node scripts/serve-web.js",
