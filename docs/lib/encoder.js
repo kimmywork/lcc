@@ -349,10 +349,6 @@ export function encode(payload, options = {}) {
     symbols[r * layout.N + c] = dataSymbols[i];
   }
 
-  if (isShapeLayer && layer.shapeExt && formatBlocks < 3) {
-    throw new Error('LCC: this shape layer requires N >= 57');
-  }
-
   const eccIndex = ECC_LEVELS.indexOf(ecc);
   const chunks = packFormatPayload({
     formatBlocks,

@@ -86,7 +86,7 @@ function friendlyError(error) {
   if (msg.includes('not enough')) return '没有找到 LCC 定位图案，请让码面完整进入画面。';
   if (msg.includes('format band')) return '格式带读取失败，请靠近一点或换一个角度。';
   if (msg.includes('version range does not fit')) {
-    return 'L3t 需要 N≥57：请把画布调到 2048，或把静区调到 2；其他形状层可适当减小静区。';
+    return '当前层/载荷在画布内放不下：请增大画布、减小静区，或缩短载荷。';
   }
   if (msg.includes('RS:')) return '纠错失败：屏幕反光/高光削顶会破坏多级灰/彩。摄像头场景请改用 L1 黑白 + constraint off，或换角度避开反光。';
   if (msg.includes('constraint')) return '约束解码失败；摄像头场景请生成 constraint off 的码面。';
@@ -386,12 +386,12 @@ document.getElementById('cameraShapePreset').addEventListener('click', () => {
   $('ecc').value = 'Q';
   $('boostEcc').checked = true;
   $('quietZone').value = '4';
-  $('moduleSize').value = '16';
+  $('moduleSize').value = 'auto';
   $('minVersion').value = '1';
   $('maxVersion').value = '100';
   if (!textEl.value.trim()) textEl.value = 'https://example.com/lcc';
   generate();
-  setStatus('已切换到摄像头形态预设：L3s（8 色 + 8 形态，6 bit）+ Q + 静区 4，模块 16px。', '');
+  setStatus('已切换到摄像头形态预设：L3s（8 色 + 8 形态，6 bit）+ Q + 静区 4；模块尺寸 auto，优先选能放下的最大模块（摄像头最低建议 16px）。', '');
 });
 
 document.querySelectorAll('[data-example]').forEach((btn) => {

@@ -52,12 +52,13 @@ export function packFormatPayload({
   if (isShape && formatBlocks < 2) {
     throw new Error('LCC format band: shape layers require at least 2 blocks');
   }
-  if (isShape && shapeExt && formatBlocks < 3) {
-    throw new Error('LCC format band: extended shape layer requires 3 blocks');
-  }
   const actualModeId = isShape ? 7 : modeId;
   const paletteBits = isShape ? (shapeLayerId & 3) : paletteBitsOf(paletteMode, harmony);
-  const flag = isShape ? (shapeExt ? 1 : 0) : (compressed || encrypted ? 1 : 0);
+  // Shape layers force constraint off, so the constraint bit is reused as the
+  // shape extension bit.  This lets L3t (16 colors + shapes) use the 2-block
+  // format at N=25 instead of being forced to N>=57.
+  const constraintBit = isShape ? (shapeExt ? 1 : 0) : (constraint ? 1 : 0);
+  const flag = compressed || encrypted ? 1 : 0;
   let bits;
   if (formatBlocks === 1) {
     bits = [...bitsOf(actualModeId, 3), ...bitsOf(eccIndex, 2)];
@@ -65,7 +66,7 @@ export function packFormatPayload({
     bits = [
       ...bitsOf(actualModeId, 3),
       ...bitsOf(eccIndex, 2),
-      constraint ? 1 : 0,
+      constraintBit,
       ...bitsOf(paletteBits, 2),
       ...bitsOf(seed & 3, 2),
     ];
@@ -73,7 +74,7 @@ export function packFormatPayload({
     bits = [
       ...bitsOf(actualModeId, 3),
       ...bitsOf(eccIndex, 2),
-      constraint ? 1 : 0,
+      constraintBit,
       ...bitsOf(paletteBits, 2),
       ...bitsOf(seed & 63, 6),
       flag,
@@ -110,11 +111,11 @@ export function unpackFormatPayload(chunks, formatBlocks) {
         modeId,
         eccIndex,
         shapeLayerId: paletteBits,
-        shapeExt: 0,
+        shapeExt: bits[5] === 1 ? 1 : 0,
         paletteMode: 'maxmin',
         harmony: false,
         seed: valueOf(bits, 8, 2),
-        constraint: bits[5] === 1,
+        constraint: false,
         compressed: false,
         encrypted: false,
       };
@@ -140,13 +141,13 @@ export function unpackFormatPayload(chunks, formatBlocks) {
       modeId,
       eccIndex,
       shapeLayerId: paletteBits,
-      shapeExt: flag ? 1 : 0,
+      shapeExt: bits[5] === 1 ? 1 : 0,
       paletteMode: 'maxmin',
       harmony: false,
       seed,
-      constraint: bits[5] === 1,
-      compressed: false,
-      encrypted: false,
+      constraint: false,
+      compressed: flag,
+      encrypted: flag,
     };
   }
   return {

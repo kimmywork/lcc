@@ -203,6 +203,23 @@ test('shape ladder covers 3-7 bits/module', () => {
   }
 });
 
+test('L3t uses large modules for small payloads', () => {
+  for (const quietZone of [2, 4]) {
+    const result = encode('tiny', {
+      layer: 'L3t',
+      width: 1024,
+      height: 1024,
+      mode: 'fill',
+      quietZone,
+      maxModulePx: 32,
+    });
+    assert.equal(result.meta.version, 2);
+    assert.ok(result.meta.moduleSize >= 30, `L3t module size ${result.meta.moduleSize}`);
+    const decoded = decodeAuto(decodePNG(encodePNG(result.image)));
+    assert.equal(decoded.text, 'tiny');
+  }
+});
+
 test('shape templates survive a one-cell shift', () => {
   const mask = shapeMask(6, 16);
   const result = classifyShape(mask, 16);

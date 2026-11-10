@@ -184,7 +184,7 @@ export const LAYERS = {
     shapeSetSize: 8,
     shapeLayerId: 3,
     shapeExt: 1,
-    minVersion: 10,
+    minVersion: 2,
     minModulePx: 16,
     description: '16 max-min colors + 8 shapes',
   },

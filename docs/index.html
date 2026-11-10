@@ -19,7 +19,7 @@
       </div>
       <p class="hero-note">
         L1 / L2a / L3b / L3c / L1s / L2s / L3s / L3t 共用同一套方形几何；形状层用 8 种线形态把容量从 1 bit 扩到 7 bit/模块。
-        摄像头/屏幕反光场景建议使用 <code>L1 / L2a / L3b / L3c / L3s</code> + <code>constraint: off</code>；形状层建议 16px 模块。
+        摄像头/屏幕反光场景建议使用 <code>L1 / L2a / L3b / L3c / L3s</code> + <code>constraint: off</code>；形状层最低建议 16px，模块尺寸 Auto 会优先选更大的方块。
       </p>
     </div>
   </header>
@@ -32,7 +32,7 @@
       </div>
 
       <div class="hint">
-        摄像头首选 <strong>L1 / L2a / L3b / L3c / L3s</strong>；L2b/L3d 需受控，L3t 建议 N≥57 + 16px（1024 画布请把静区调到 2，或用 2048 画布），L4e/L4f 仅清洁/数字/打印。
+        摄像头首选 <strong>L1 / L2a / L3b / L3c / L3s</strong>；L2b/L3d 需受控，L3t 可用 N≥25，模块最低建议 16px，Auto 会优先选更大方块；L4e/L4f 仅清洁/数字/打印。
       </div>
 
       <label class="field">
@@ -166,7 +166,7 @@
       </div>
 
       <div class="hint">
-        如果识别失败，先确认码面是 <strong>L1 / L2a / L3b / L3c / L3s + constraint off</strong>；形状层建议模块 ≥12–16px，多级灰/彩在屏幕反光下可能丢级。
+        如果识别失败，先确认码面是 <strong>L1 / L2a / L3b / L3c / L3s + constraint off</strong>；形状层模块最低建议 16px，Auto 会优先选更大方块；多级灰/彩在屏幕反光下可能丢级。
       </div>
 
       <div class="actions">
