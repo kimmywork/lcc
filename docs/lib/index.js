@@ -11,6 +11,7 @@ export { makeLayout, hilbertOrder } from './layout.js';
 export { renderSVG } from './svg.js';
 export { LAYERS, LAYER_BY_ID, SHAPE_LAYER_BY_ID, resolveShapeLayer, ECC_LEVELS, ECC_NAMES, ECC_BY_NAME, eccNameOf, versionToSize, sizeToVersion } from './constants.js';
 export { SHAPE_NAMES, foregroundFor, shapeMask, classifyShape, clusterModule, refineBackground } from './shapes.js';
+export { stackCanonicalFrames } from './stack.js';
 export { RankConstraint } from './constraint.js';
 export { rsEncode, rsDecode } from './ecc/rs.js';
 export { bch15Encode, bch15Decode } from './ecc/bch15.js';

@@ -179,8 +179,8 @@
       </div>
 
       <div class="camera-wrap">
-        <video id="video" playsinline muted></video>
-        <div id="cameraHint" class="camera-hint">摄像头未开启</div>
+        <video id="video" autoplay playsinline webkit-playsinline muted></video>
+        <div id="cameraHint" class="camera-hint">点击打开摄像头</div>
       </div>
 
       <div class="actions">
@@ -189,6 +189,17 @@
           <input type="checkbox" id="continuous" />
           <span>连续扫描</span>
         </label>
+        <label class="field inline-field">
+          <span>多帧</span>
+          <select id="stackFrames">
+            <option value="1">关闭</option>
+            <option value="3" selected>3 帧</option>
+            <option value="5">5 帧</option>
+          </select>
+        </label>
+      </div>
+      <div class="hint">
+        多帧叠加适合静止码面：1/3/5 帧，默认 3 帧；移动时自动使用可检测到的帧。
       </div>
 
       <div class="preview-wrap">

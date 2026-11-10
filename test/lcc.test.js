@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { BitReader, BitWriter } from '../src/bitstream.js';
 import { deltaE76, rgbToLab } from '../src/color.js';
 import { RankConstraint } from '../src/constraint.js';
-import { decodeAuto } from '../src/decoder.js';
+import { decodeAuto, detectSymbol } from '../src/decoder.js';
 import { bch15Decode, bch15Encode } from '../src/ecc/bch15.js';
 import { rsDecode, rsEncode } from '../src/ecc/rs.js';
 import { encode } from '../src/encoder.js';
@@ -13,6 +13,7 @@ import { generatePalette } from '../src/palettes.js';
 import { decodePNG, encodePNG } from '../src/png.js';
 import { applyHomography, computeHomography } from '../src/detector.js';
 import { classifyShape, foregroundFor, shapeMask } from '../src/shapes.js';
+import { stackCanonicalFrames } from '../src/stack.js';
 import { renderSVG } from '../src/svg.js';
 
 function rng(seed) {
@@ -232,6 +233,42 @@ test('foreground colour keeps contrast on mid-grey', () => {
   const foreground = foregroundFor(background);
   const distance = deltaE76(rgbToLab(background), rgbToLab(foreground));
   assert.ok(distance > 40, `mid-grey foreground contrast ${distance.toFixed(1)}`);
+});
+
+test('multi-frame stacking decodes a noisy burst', () => {
+  const text = 'stack test';
+  const result = encode(text, {
+    layer: 'L3s',
+    version: 2,
+    moduleSize: 24,
+    width: 1024,
+    height: 1024,
+    mode: 'fill',
+    maxModulePx: 32,
+  });
+  const noisy = (image, sigma, seed) => {
+    const rand = rng(seed);
+    const data = new Uint8Array(image.data.length);
+    for (let i = 0; i < data.length; i++) {
+      const u1 = Math.max(1e-9, rand());
+      const u2 = rand();
+      const g = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2) * sigma;
+      data[i] = Math.max(0, Math.min(255, Math.round(image.data[i] + g)));
+    }
+    return { width: image.width, height: image.height, data };
+  };
+  const frames = [];
+  const detections = [];
+  for (let i = 0; i < 3; i++) {
+    const frame = noisy(result.image, 20, 100 + i);
+    frames.push(frame);
+    detections.push(detectSymbol(frame));
+  }
+  const stacked = stackCanonicalFrames(frames, detections, { quietZone: 4 });
+  assert.equal(stacked.stacked, true);
+  assert.ok(stacked.frames >= 2);
+  const decoded = decodeAuto(stacked.image);
+  assert.equal(decoded.text, text);
 });
 
 test('SVG renders shape strokes', () => {

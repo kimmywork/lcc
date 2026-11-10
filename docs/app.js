@@ -1,4 +1,10 @@
-import { encode, decodeAuto, renderSVG } from './lib/index.js';
+import {
+  encode,
+  decodeAuto,
+  detectPerspective,
+  renderSVG,
+  stackCanonicalFrames,
+} from './lib/index.js';
 
 const $ = (id) => document.getElementById(id);
 const textEl = $('text');
@@ -136,6 +142,15 @@ function renderScanStats(container, meta) {
     ['bit/模块', Number(meta.bitsPerModule ?? 0).toFixed(3)],
     ['格式带', `${meta.formatBlocks ?? '—'} 块/副本`],
   ];
+  if (meta.stackRequested > 1 || meta.stackFrames > 1) {
+    const noise = Number.isFinite(meta.stackNoise) ? ` · σ≈${meta.stackNoise.toFixed(1)}` : '';
+    items.push([
+      '叠加',
+      `${meta.stackFrames}/${meta.stackRequested ?? meta.stackFrames} 帧` +
+        (meta.stackModuleSize ? ` · ${meta.stackModuleSize}px` : '') +
+        noise,
+    ]);
+  }
   container.innerHTML = items
     .map(([k, v]) => `<div class="stat"><span>${k}</span><strong>${v}</strong></div>`)
     .join('');
@@ -226,6 +241,34 @@ function captureFrame() {
   return imageDataToRGB(ctx.getImageData(0, 0, w, h));
 }
 
+async function captureStack(count, onProgress) {
+  const frames = [];
+  const detections = [];
+  for (let i = 0; i < count; i++) {
+    const frame = captureFrame();
+    let det = null;
+    try {
+      det = detectPerspective(frame);
+    } catch {
+      // Skip frames without a usable symbol.
+    }
+    frames.push(frame);
+    detections.push(det);
+    onProgress?.(i + 1, count);
+    if (i < count - 1) await new Promise((resolve) => setTimeout(resolve, 90));
+  }
+  try {
+    return stackCanonicalFrames(frames, detections, { quietZone: 4 });
+  } catch {
+    return {
+      image: frames[frames.length - 1],
+      frames: 1,
+      requested: count,
+      stacked: false,
+    };
+  }
+}
+
 async function decodeRGB(image, options = {}) {
   if (decoding) return false;
   decoding = true;
@@ -233,6 +276,12 @@ async function decodeRGB(image, options = {}) {
   await new Promise((resolve) => setTimeout(resolve, 20));
   try {
     const result = decodeAuto(image, options.detector ? { detector: options.detector } : {});
+    if (options.stackInfo) {
+      result.meta.stackFrames = options.stackInfo.frames;
+      result.meta.stackRequested = options.stackInfo.requested;
+      result.meta.stackModuleSize = options.stackInfo.moduleSize;
+      result.meta.stackNoise = options.stackInfo.noise;
+    }
     const payload = result.payload;
     let text = result.text;
     if (text === null) {
@@ -243,7 +292,13 @@ async function decodeRGB(image, options = {}) {
     renderScanStats($('scanStats'), result.meta);
     $('scanMeta').textContent = decodeMetaText(result);
     $('scanResult').hidden = false;
-    setStatus(`识别成功 · ${result.meta.layer} v${result.meta.version} · 校正 ${result.meta.correctedSymbols} 个 RS 符号`, 'ok');
+    const stackNote = result.meta.stackRequested > 1
+      ? ` · 叠加 ${result.meta.stackFrames}/${result.meta.stackRequested} 帧`
+      : '';
+    setStatus(
+      `识别成功 · ${result.meta.layer} v${result.meta.version} · 校正 ${result.meta.correctedSymbols} 个 RS 符号${stackNote}`,
+      'ok',
+    );
     return true;
   } catch (e) {
     if (!options.silent) setStatus(`识别失败：${friendlyError(e)}`, 'err');
@@ -253,16 +308,38 @@ async function decodeRGB(image, options = {}) {
   }
 }
 
+async function captureAndDecode({ silent = false } = {}) {
+  const count = Number($('stackFrames').value) || 1;
+  let stack;
+  if (count > 1) {
+    setStatus(`多帧叠加：0/${count}…`, 'busy');
+    stack = await captureStack(count, (done, total) => {
+      setStatus(`多帧叠加：${done}/${total}…`, 'busy');
+    });
+  } else {
+    stack = {
+      image: captureFrame(),
+      frames: 1,
+      requested: 1,
+      stacked: false,
+    };
+  }
+  drawImage(scanCanvas, stack.image);
+  return decodeRGB(stack.image, {
+    detector: stack.stacked ? 'axis' : 'perspective',
+    stackInfo: stack,
+    silent,
+  });
+}
+
 function scheduleContinuous() {
   clearTimeout(continuousTimer);
   if (!$('continuous').checked || !cameraStream) return;
   continuousTimer = setTimeout(async () => {
     if (!$('continuous').checked || !cameraStream) return;
     try {
-      const image = captureFrame();
-      drawImage(scanCanvas, image);
       setStatus('扫描中…请让码面完整进入画面', 'busy');
-      const ok = await decodeRGB(image, { silent: true, detector: 'perspective' });
+      const ok = await captureAndDecode({ silent: true });
       if (ok) {
         $('continuous').checked = false;
         return;
@@ -274,25 +351,114 @@ function scheduleContinuous() {
   }, 750);
 }
 
-async function startCamera() {
-  try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({
+function cameraErrorMessage(error) {
+  const name = error?.name;
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    return '权限被拒绝。请在浏览器/系统设置中允许摄像头；iOS 还需在“设置 > Safari > 相机”中允许。';
+  }
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+    return '没有找到摄像头。';
+  }
+  if (name === 'NotReadableError' || name === 'TrackStartError') {
+    return '摄像头被其他应用占用，请关闭其他相机应用后重试。';
+  }
+  if (name === 'OverconstrainedError') {
+    return '摄像头不支持请求的分辨率，请重试。';
+  }
+  return error?.message ?? String(error);
+}
+
+async function getCameraStream() {
+  const attempts = [
+    {
       video: {
         facingMode: { ideal: 'environment' },
         width: { ideal: 1920 },
         height: { ideal: 1080 },
       },
       audio: false,
-    });
+    },
+    {
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    },
+    { video: { facingMode: 'environment' }, audio: false },
+    { video: true, audio: false },
+  ];
+  let lastError = null;
+  for (const constraints of attempts) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError ?? new Error('无法获取摄像头视频流');
+}
+
+async function waitForVideoReady(element) {
+  if (element.readyState >= 2 && element.videoWidth) return;
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('摄像头画面尚未就绪'));
+    }, 5000);
+    const check = () => {
+      if (element.videoWidth && element.readyState >= 2) {
+        cleanup();
+        resolve();
+      }
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      element.removeEventListener('loadedmetadata', check);
+      element.removeEventListener('canplay', check);
+    };
+    element.addEventListener('loadedmetadata', check);
+    element.addEventListener('canplay', check);
+    check();
+  });
+}
+
+async function startCamera() {
+  const startButton = $('cameraStart');
+  startButton.disabled = true;
+  setStatus('正在请求摄像头…', 'busy');
+  try {
+    if (!window.isSecureContext) {
+      throw new Error('摄像头需要 HTTPS 或 localhost；请通过 HTTPS 打开页面。');
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('当前浏览器不支持摄像头 API；请使用最新版 Safari/Chrome。');
+    }
+    cameraStream = await getCameraStream();
     video.srcObject = cameraStream;
+    video.muted = true;
+    video.setAttribute('playsinline', '');
+    video.setAttribute('webkit-playsinline', '');
     await video.play();
+    await waitForVideoReady(video);
     $('cameraHint').style.display = 'none';
     $('capture').disabled = false;
     $('cameraStop').disabled = false;
-    $('cameraStart').disabled = true;
-    setStatus('摄像头已开启。把 LCC 码放进画面，点击拍照或开启连续扫描。', '');
+    startButton.disabled = true;
+    setStatus(
+      `摄像头已开启（${video.videoWidth}×${video.videoHeight}）。把 LCC 码放进画面，点击拍照或开启连续扫描。`,
+      '',
+    );
   } catch (e) {
-    setStatus(`无法打开摄像头：${e.message}`, 'err');
+    if (cameraStream) {
+      for (const track of cameraStream.getTracks()) track.stop();
+      cameraStream = null;
+    }
+    video.srcObject = null;
+    $('cameraHint').style.display = '';
+    startButton.disabled = false;
+    setStatus(`无法打开摄像头：${cameraErrorMessage(e)}`, 'err');
   }
 }
 
@@ -303,6 +469,7 @@ function stopCamera() {
     for (const track of cameraStream.getTracks()) track.stop();
     cameraStream = null;
   }
+  video.pause();
   video.srcObject = null;
   $('cameraHint').style.display = '';
   $('capture').disabled = true;
@@ -437,11 +604,12 @@ $('file').addEventListener('change', async (event) => {
 
 $('cameraStart').addEventListener('click', startCamera);
 $('cameraStop').addEventListener('click', stopCamera);
+$('cameraHint').addEventListener('click', () => {
+  if (!cameraStream) startCamera();
+});
 $('capture').addEventListener('click', async () => {
   try {
-    const image = captureFrame();
-    drawImage(scanCanvas, image);
-    await decodeRGB(image, { detector: 'perspective' });
+    await captureAndDecode();
   } catch (e) {
     setStatus(friendlyError(e), 'err');
   }
