@@ -4,24 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void point_at(const LccDet *d, double row, double col, double *x, double *y) {
-  if (d->has_h) {
-    const double u = col + 0.5;
-    const double v = row + 0.5;
-    const double w = d->H[6] * u + d->H[7] * v + d->H[8];
-    if (fabs(w) < 1e-12) {
-      *x = NAN;
-      *y = NAN;
-      return;
-    }
-    *x = (d->H[0] * u + d->H[1] * v + d->H[2]) / w;
-    *y = (d->H[3] * u + d->H[4] * v + d->H[5]) / w;
-    return;
-  }
-  *x = d->origin_x + (col + 0.5) * d->s;
-  *y = d->origin_y + (row + 0.5) * d->s;
-}
-
 static int copy_frame(const LccImage *frame, uint8_t **out_rgb, int *out_w, int *out_h) {
   const size_t n = (size_t)frame->width * (size_t)frame->height * 3;
   uint8_t *data = lcc_alloc(n);
@@ -50,7 +32,8 @@ int lcc_stack_frames(
   int *out_version,
   int *out_N,
   int *out_module,
-  int *out_quiet
+  int *out_quiet,
+  int *out_source
 ) {
   if (count <= 0 || quiet_zone < 0) return LCC_BAD_INPUT;
   if (max_dimension <= 0) max_dimension = 1400;
@@ -116,6 +99,7 @@ int lcc_stack_frames(
     const int ok = copy_frame(&frames[best[0]], out_rgb, out_w, out_h);
     *out_stacked = 0;
     *out_module = (int)lcc_js_round(ref->s > 0 ? ref->s : module);
+    if (out_source) *out_source = best[0];
     lcc_release(best);
     return ok ? LCC_OK : LCC_ERR;
   }
@@ -145,15 +129,45 @@ int lcc_stack_frames(
     for (int y = 0; y < height; y++) {
       const double my = ((double)y + 0.5) / module - quiet_zone;
       if (my < 0 || my >= ref->N) continue;
-      const int row = (int)floor(my);
-      const double v = my - row;
-      for (int x = 0; x < width; x++) {
-        const double mx = ((double)x + 0.5) / module - quiet_zone;
-        if (mx < 0 || mx >= ref->N) continue;
-        const int col = (int)floor(mx);
-        const double u = mx - col;
+      int x0 = 0;
+      while (x0 < width && ((double)x0 + 0.5) / module - quiet_zone < 0) x0++;
+      int x1 = width;
+      while (x1 > x0 && ((double)(x1 - 1) + 0.5) / module - quiet_zone >= ref->N) x1--;
+      if (x0 >= x1) continue;
+      const double dmx = 1.0 / module;
+      double mx = ((double)x0 + 0.5) / module - quiet_zone;
+      double numx = 0, numy = 0, den = 1, dnumx = 0, dnumy = 0, dden = 0, sx0 = 0, sy0 = 0, dsx = 0;
+      if (det->has_h) {
+        numx = det->H[0] * mx + det->H[1] * my + det->H[2];
+        numy = det->H[3] * mx + det->H[4] * my + det->H[5];
+        den = det->H[6] * mx + det->H[7] * my + det->H[8];
+        dnumx = det->H[0] * dmx;
+        dnumy = det->H[3] * dmx;
+        dden = det->H[6] * dmx;
+      } else {
+        sx0 = det->origin_x + mx * det->s;
+        sy0 = det->origin_y + my * det->s;
+        dsx = det->s * dmx;
+      }
+      for (int x = x0; x < x1; x++) {
         double sx, sy;
-        point_at(det, row + v - 0.5, col + u - 0.5, &sx, &sy);
+        if (det->has_h) {
+          if (fabs(den) < 1e-12) {
+            numx += dnumx;
+            numy += dnumy;
+            den += dden;
+            continue;
+          }
+          sx = numx / den;
+          sy = numy / den;
+          numx += dnumx;
+          numy += dnumy;
+          den += dden;
+        } else {
+          sx = sx0;
+          sy = sy0;
+          sx0 += dsx;
+        }
         if (!isfinite(sx) || !isfinite(sy)) continue;
         int rgb[3];
         lcc_sample_bilinear(frame, sx, sy, rgb);
@@ -226,6 +240,7 @@ int lcc_stack_frames(
   *out_stacked = 1;
   *out_module = module;
   *out_noise = noise_count ? noise_sum / noise_count : 0;
+  if (out_source) *out_source = best[0];
   lcc_release(sum);
   lcc_release(counts);
   lcc_release(best);

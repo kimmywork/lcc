@@ -26,17 +26,29 @@ if command -v emcc >/dev/null 2>&1 || [ -x "$HOME/emsdk/upstream/emscripten/emcc
     . "$HOME/emsdk/emsdk_env.sh"
   fi
   # shellcheck disable=SC2086
+  export EM_CACHE="${EM_CACHE:-$ROOT/.em-cache}"
+  # shellcheck disable=SC2086
   emcc $SOURCES \
     -O3 \
+    -msimd128 \
     -Inative \
     -s STANDALONE_WASM=1 \
-    -s EXPORTED_FUNCTIONS='["_lcc_api_stack","_lcc_api_decode","_lcc_api_scan","_lcc_last","_lcc_last_len","_malloc","_free"]' \
+    -s PURE_WASI=1 \
+    -s ALLOW_MEMORY_GROWTH=1 \
+    --no-entry \
+    -Wl,--export=lcc_api_stack \
+    -Wl,--export=lcc_api_decode \
+    -Wl,--export=lcc_api_scan \
+    -Wl,--export=lcc_last \
+    -Wl,--export=lcc_last_len \
+    -Wl,--export=malloc \
+    -Wl,--export=free \
     -o docs/lib/lcc.wasm
 else
   export ZIG_GLOBAL_CACHE_DIR="${ZIG_GLOBAL_CACHE_DIR:-$ROOT/.zig-cache}"
   export ZIG_LOCAL_CACHE_DIR="${ZIG_LOCAL_CACHE_DIR:-$ROOT/.zig-cache}"
   # shellcheck disable=SC2086
-  zig cc -target wasm32-wasi -O3 -Inative $SOURCES \
+  zig cc -target wasm32-wasi -mcpu=generic+simd128 -O3 -Inative $SOURCES \
     -o docs/lib/lcc.wasm \
     -Wl,--no-entry \
     -Wl,--export=lcc_api_stack \

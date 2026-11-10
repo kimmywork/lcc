@@ -1,5 +1,10 @@
 node_modules/
 .zig-cache/
+.em-cache/
+photo/
+.agents/
+skills-lock.json
+skill-locks.json
 __pycache__/
 *.pyc
 .DS_Store

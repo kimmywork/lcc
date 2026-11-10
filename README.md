@@ -213,6 +213,7 @@ Web 编码面板的“高级设置”里可以直接调这些参数；生成后�
 ## 研究
 
 - [LCC vs Cimbar：差距、形状维度与增强路线](docs/research/cimbar-vs-lcc-and-shape.md)：Cimbar 对比、形状 + 颜色符号设计草案、验证计划与风险。形状维度已按“线形态”方案实现；报告保留为研究记录。
+- [微信二维码模型与 WASM 速度](docs/research/wechat-qr-models-and-wasm-speed.md)：检测网和超分网各自替换哪一段、能不能减 LCC 的前置，以及扫描重复解码为什么比模型更值得先做。研究记录，尚未训练或接入。
 
 ## Web 版 / GitHub Pages
 
