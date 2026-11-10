@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { BitReader, BitWriter } from '../src/bitstream.js';
-import { deltaE76 } from '../src/color.js';
+import { deltaE76, rgbToLab } from '../src/color.js';
 import { RankConstraint } from '../src/constraint.js';
 import { decodeAuto } from '../src/decoder.js';
 import { bch15Decode, bch15Encode } from '../src/ecc/bch15.js';
@@ -12,6 +12,7 @@ import { buildFrame, parseFrame } from '../src/frame.js';
 import { generatePalette } from '../src/palettes.js';
 import { decodePNG, encodePNG } from '../src/png.js';
 import { applyHomography, computeHomography } from '../src/detector.js';
+import { classifyShape, foregroundFor, shapeMask } from '../src/shapes.js';
 import { renderSVG } from '../src/svg.js';
 
 function rng(seed) {
@@ -173,6 +174,68 @@ test('version range, module size and quiet zone', () => {
   assert.equal(result.image.width, (result.meta.N + 8) * 8);
   const decoded = decodeAuto(decodePNG(encodePNG(result.image)));
   assert.equal(decoded.text, 'V5');
+});
+
+test('shape ladder covers 3-7 bits/module', () => {
+  const text = 'shape ladder';
+  const expected = new Map([
+    ['L3b', 3],
+    ['L1s', 4],
+    ['L2s', 5],
+    ['L3s', 6],
+    ['L3t', 7],
+  ]);
+  for (const [layer, bits] of expected) {
+    const result = encode(text, {
+      layer,
+      version: layer === 'L3t' ? 10 : 2,
+      moduleSize: layer === 'L3t' ? 16 : 24,
+      width: 1024,
+      height: 1024,
+      mode: 'fill',
+      maxModulePx: 32,
+    });
+    assert.equal(result.meta.bitsPerModule, bits, `${layer} bits/module`);
+    assert.equal(result.meta.shapeLayer, true, `${layer} shape mode`);
+    const decoded = decodeAuto(decodePNG(encodePNG(result.image)));
+    assert.equal(decoded.text, text, `${layer} round-trip`);
+    assert.equal(decoded.meta.layer, layer, `${layer} decoded layer`);
+  }
+});
+
+test('shape templates survive a one-cell shift', () => {
+  const mask = shapeMask(6, 16);
+  const result = classifyShape(mask, 16);
+  assert.equal(result.shape, 6);
+  assert.ok(result.costs[6] <= 1);
+});
+
+test('foreground colour keeps contrast on mid-grey', () => {
+  const background = [128, 128, 128];
+  const foreground = foregroundFor(background);
+  const distance = deltaE76(rgbToLab(background), rgbToLab(foreground));
+  assert.ok(distance > 40, `mid-grey foreground contrast ${distance.toFixed(1)}`);
+});
+
+test('SVG renders shape strokes', () => {
+  const result = encode('SVG shape', {
+    layer: 'L3s',
+    version: 10,
+    moduleSize: 16,
+    width: 1024,
+    height: 1024,
+    mode: 'fill',
+    maxModulePx: 32,
+  });
+  const svg = renderSVG({
+    symbols: result.symbols,
+    layout: result.layout,
+    palette: result.paletteInfo.palette,
+    moduleSize: result.meta.moduleSize,
+    quietZone: result.meta.quietZone,
+  });
+  assert.ok(svg.includes('<line'));
+  assert.ok(svg.includes('stroke-width'));
 });
 
 test('SVG output and encoder statistics', () => {

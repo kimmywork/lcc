@@ -49,7 +49,7 @@ Usage:
     --input <text>         text payload
     --input-file <path>    read payload from file (UTF-8)
     --output <path>        output PNG (required)
-    --layer <L1|L2a|L2b|L3c|L3d|L4e|L4f>  default L1
+    --layer <name>          L1/L2a/L3b/L3c/L1s/L2s/L3s/L3t/... default L1
     --size <px>            canvas side, default 1024
     --mode <fill|compact>  default fill
     --palette <maxmin|harmony>  default maxmin
@@ -136,7 +136,12 @@ function cmdDecode(args) {
 function cmdInfo() {
   for (const layer of Object.values(LAYERS)) {
     const eccName = ECC_NAMES[ECC_LEVELS.indexOf(layer.ecc)] ?? '?';
-    console.log(`${layer.name}: ${layer.paletteSize} symbols, ${layer.bitsPerModule} bit/module, ECC ${eccName} (${(layer.ecc * 100).toFixed(0)}%), ${layer.description}`);
+    const shapeCount = layer.shapeSetSize ?? 1;
+    const symbols = shapeCount * layer.paletteSize;
+    const shapeInfo = shapeCount > 1
+      ? ` (${layer.paletteSize} colors × ${shapeCount} shapes)`
+      : '';
+    console.log(`${layer.name}: ${symbols} symbols${shapeInfo}, ${layer.bitsPerModule} bit/module, ECC ${eccName} (${(layer.ecc * 100).toFixed(0)}%), ${layer.description}`);
   }
 }
 

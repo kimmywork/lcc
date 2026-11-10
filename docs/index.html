@@ -18,8 +18,8 @@
         </div>
       </div>
       <p class="hero-note">
-        L1 / L2a / L2b / L3c / L3d / L4e / L4f 共用同一套方形几何；可逆亮度约束、真 RS 纠错、BCH 格式带。
-        摄像头/屏幕反光场景建议使用 <code>L1 / L2a / L3c</code> + <code>constraint: off</code>。
+        L1 / L2a / L3b / L3c / L1s / L2s / L3s / L3t 共用同一套方形几何；形状层用 8 种线形态把容量从 1 bit 扩到 7 bit/模块。
+        摄像头/屏幕反光场景建议使用 <code>L1 / L2a / L3b / L3c / L3s</code> + <code>constraint: off</code>；形状层建议 16px 模块。
       </p>
     </div>
   </header>
@@ -32,7 +32,7 @@
       </div>
 
       <div class="hint">
-        摄像头首选 <strong>L1 / L2a / L3c</strong>；L2b 需受控，L3d 尽量避开反光，L4e/L4f 仅清洁/数字/打印。
+        摄像头首选 <strong>L1 / L2a / L3b / L3c / L3s</strong>；L2b/L3d 需受控，L3t 建议 N≥57 + 16px（1024 画布请把静区调到 2，或用 2048 画布），L4e/L4f 仅清洁/数字/打印。
       </div>
 
       <label class="field">
@@ -46,19 +46,25 @@
         <button class="ghost small" data-example="金刚经.txt">金刚经</button>
         <button class="ghost small" id="cameraPreset">摄像头黑白</button>
         <button class="ghost small" id="cameraColorPreset">摄像头彩色</button>
+        <button class="ghost small" id="cameraShapePreset">摄像头形态</button>
       </div>
 
       <div class="grid-controls">
         <label class="field">
           <span>层</span>
           <select id="layer">
-            <option value="L1" selected>L1 · 黑白</option>
-            <option value="L2a">L2a · 4 灰</option>
-            <option value="L2b">L2b · 8 灰</option>
-            <option value="L3c">L3c · 16 色</option>
-            <option value="L3d">L3d · 32 色</option>
-            <option value="L4e">L4e · 64 色</option>
-            <option value="L4f">L4f · 256 色</option>
+            <option value="L1" selected>L1 · 黑白 · 1 bit</option>
+            <option value="L2a">L2a · 4 灰 · 2 bit</option>
+            <option value="L3b">L3b · 8 色 · 3 bit</option>
+            <option value="L2b">L2b · 8 灰 · 3 bit</option>
+            <option value="L3c">L3c · 16 色 · 4 bit</option>
+            <option value="L1s">L1s · 黑白 + 8 形态 · 4 bit</option>
+            <option value="L2s">L2s · 4 灰 + 8 形态 · 5 bit</option>
+            <option value="L3d">L3d · 32 色 · 5 bit</option>
+            <option value="L3s">L3s · 8 色 + 8 形态 · 6 bit</option>
+            <option value="L4e">L4e · 64 色 · 6 bit</option>
+            <option value="L3t">L3t · 16 色 + 8 形态 · 7 bit</option>
+            <option value="L4f">L4f · 256 色 · 8 bit</option>
           </select>
         </label>
         <label class="field">
@@ -160,7 +166,7 @@
       </div>
 
       <div class="hint">
-        如果识别失败，先确认码面是 <strong>L1 / L2a / L3c + constraint off</strong>；多级灰/彩在屏幕反光下可能丢级。
+        如果识别失败，先确认码面是 <strong>L1 / L2a / L3b / L3c / L3s + constraint off</strong>；形状层建议模块 ≥12–16px，多级灰/彩在屏幕反光下可能丢级。
       </div>
 
       <div class="actions">

@@ -9,18 +9,27 @@
 import { BitWriter } from './bitstream.js';
 import { buildCalibrator } from './calibration.js';
 import { nearestIndex, rgbToLab } from './color.js';
-import { ECC_LEVELS, LAYERS, LAYER_BY_ID, eccNameOf, sizeToVersion, versionToSize } from './constants.js';
+import {
+  ECC_LEVELS,
+  LAYERS,
+  LAYER_BY_ID,
+  eccNameOf,
+  resolveShapeLayer,
+  sizeToVersion,
+  versionToSize,
+} from './constants.js';
 import { RankConstraint, viterbiCorrect } from './constraint.js';
 import { detectPerspective } from './detector.js';
 import { rsDecodeBlocks } from './ecc/rs.js';
 import { parseFrame } from './frame.js';
 import { readFormatBand } from './format/format-band.js';
-import { FINDER_PATTERN, sampleImage } from './image-utils.js';
+import { FINDER_PATTERN, sampleImage, sampleImageBilinear } from './image-utils.js';
 import { preprocessVariants } from './preprocess.js';
 import { buildIlluminationModel } from './illumination.js';
 import { localRankSymbols } from './local-rank.js';
 import { BLACK, WHITE, makeLayout } from './layout.js';
 import { generatePalette } from './palettes.js';
+import { classifyShape, clusterModule, refineBackground } from './shapes.js';
 import { makeWhitening } from './whitening.js';
 
 function finderCandidates(mask, width, height, horizontal) {
@@ -184,6 +193,33 @@ export function sampleModule(image, originX, originY, s, row, col) {
   return sampleImage(image, cx, cy, radius);
 }
 
+function modulePoint(det, row, col, u, v) {
+  if (typeof det.pointAt === 'function') {
+    return det.pointAt(row + v - 0.5, col + u - 0.5);
+  }
+  return [
+    det.originX + (col + u) * det.s,
+    det.originY + (row + v) * det.s,
+  ];
+}
+
+function sampleModuleGrid(image, det, row, col, gridN) {
+  const out = new Array(gridN * gridN);
+  for (let gy = 0; gy < gridN; gy++) {
+    for (let gx = 0; gx < gridN; gx++) {
+      const [x, y] = modulePoint(
+        det,
+        row,
+        col,
+        (gx + 0.5) / gridN,
+        (gy + 0.5) / gridN,
+      );
+      out[gy * gridN + gx] = sampleImageBilinear(image, x, y);
+    }
+  }
+  return out;
+}
+
 function decodeText(payload) {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(payload);
@@ -238,12 +274,17 @@ export function decode(image, options = {}) {
   };
   const fmt = readFormatBand(getFormatSymbol, layoutProbe);
 
-  const layer = LAYER_BY_ID.get(fmt.modeId);
-  const layerName = options.layer ?? layer?.name;
+  const normalLayer = LAYER_BY_ID.get(fmt.modeId);
+  const layerName = options.layer
+    ?? (fmt.modeId === 7
+      ? resolveShapeLayer(fmt.shapeLayerId, fmt.shapeExt)
+      : normalLayer?.name);
   if (!layerName) throw new Error(`LCC decode: unknown layer id ${fmt.modeId}`);
-  const paletteMode = options.paletteMode ?? fmt.paletteMode;
-  const harmony = options.harmony ?? fmt.harmony;
-  const constraint = options.constraint ?? fmt.constraint;
+  const layer = LAYERS[layerName];
+  const isShapeLayer = !!layer.shapeSetSize;
+  const paletteMode = isShapeLayer ? 'maxmin' : (options.paletteMode ?? fmt.paletteMode);
+  const harmony = isShapeLayer ? false : (options.harmony ?? fmt.harmony);
+  const constraint = isShapeLayer ? false : (options.constraint ?? fmt.constraint);
   const seed = options.seed ?? fmt.seed;
 
   const paletteInfo = generatePalette(layerName, { mode: paletteMode, harmony });
@@ -264,11 +305,45 @@ export function decode(image, options = {}) {
 
   const symbolsCal = new Array(layout.dataCount);
   const rgbSamples = new Array(layout.dataCount);
+  const patternShapes = isShapeLayer && layer.shapeSetSize > 1;
+  const gridN = patternShapes
+    ? Math.max(8, Math.min(16, Math.round(det.s || 12)))
+    : 0;
+  const shapeLineWidthPx = patternShapes ? Math.max(1, Math.round(det.s / 8)) : 0;
+  const shapeInsetPx = patternShapes ? Math.max(1, Math.round(det.s / 16)) : 0;
+  const shapeLineWidthGrid = patternShapes
+    ? Math.max(1, Math.round((shapeLineWidthPx * gridN) / det.s))
+    : 0;
+  const shapeInsetGrid = patternShapes
+    ? Math.max(1, Math.round((shapeInsetPx * gridN) / det.s))
+    : 0;
   for (let i = 0; i < layout.dataCoords.length; i++) {
     const [r, c] = layout.dataCoords[i];
-    const rgb = sampler(r, c);
-    rgbSamples[i] = rgb;
-    symbolsCal[i] = calibrator.classify(rgb);
+    if (patternShapes) {
+      const grid = sampleModuleGrid(image, det, r, c, gridN);
+      const normalized = grid.map((rgb) => (
+        illumination ? illumination.normalize(rgb, r, c) : rgb
+      ));
+      const cluster = clusterModule(normalized);
+      const shapeResult = classifyShape(cluster.foregroundMask, gridN, {
+        lineWidth: shapeLineWidthGrid,
+        inset: shapeInsetGrid,
+      });
+      const background = refineBackground(
+        normalized,
+        shapeResult.shape,
+        gridN,
+        shapeLineWidthGrid,
+        shapeInsetGrid,
+      );
+      const colorIndex = calibrator.classify(background);
+      symbolsCal[i] = shapeResult.shape * layer.paletteSize + colorIndex;
+      rgbSamples[i] = background;
+    } else {
+      const rgb = sampler(r, c);
+      rgbSamples[i] = rgb;
+      symbolsCal[i] = calibrator.classify(rgb);
+    }
   }
 
   const errorMeta = {
@@ -278,6 +353,9 @@ export function decode(image, options = {}) {
     paletteMode,
     constraint,
     seed,
+    shapeSetSize: layer.shapeSetSize ?? 1,
+    shapeLayerId: isShapeLayer ? layer.shapeLayerId : null,
+    shapeExt: isShapeLayer ? layer.shapeExt : 0,
     ecc: ECC_LEVELS[fmt.eccIndex] ?? LAYERS[layerName].ecc,
     eccLevel: eccNameOf(ECC_LEVELS[fmt.eccIndex] ?? LAYERS[layerName].ecc),
   };
@@ -362,6 +440,13 @@ export function decode(image, options = {}) {
         correctedSymbols: rs.corrected,
         calibration: calibrationType,
         flags: frame.flags,
+        shapeLayer: isShapeLayer,
+        shapeLayerId: isShapeLayer ? layer.shapeLayerId : null,
+        shapeExt: isShapeLayer ? layer.shapeExt : 0,
+        shapeSetSize: layer.shapeSetSize ?? 1,
+        shapeBits: isShapeLayer ? Math.log2(layer.shapeSetSize) : 0,
+        colorCount: layer.paletteSize,
+        shapeGrid: patternShapes ? gridN : 0,
       },
       detection: det,
     };
@@ -371,7 +456,7 @@ export function decode(image, options = {}) {
     return attempt(symbolsCal, null, calibrator.type);
   } catch (firstError) {
     if (!firstError.lccMeta) firstError.lccMeta = errorMeta;
-    if (layerName !== 'L1' && paletteInfo.kind === 'gray') {
+    if (!isShapeLayer && layerName !== 'L1' && paletteInfo.kind === 'gray') {
       const lr = localRankSymbols({ layout, rgbSamples, levels: paletteInfo.paletteSize });
       try {
         return attempt(Array.from(lr.symbols), lr.costs, 'local-rank');

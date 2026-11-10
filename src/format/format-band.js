@@ -45,14 +45,25 @@ export function packFormatPayload({
   constraint = false,
   compressed = false,
   encrypted = false,
+  shapeLayerId = null,
+  shapeExt = 0,
 }) {
-  const paletteBits = paletteBitsOf(paletteMode, harmony);
+  const isShape = shapeLayerId !== null && shapeLayerId !== undefined;
+  if (isShape && formatBlocks < 2) {
+    throw new Error('LCC format band: shape layers require at least 2 blocks');
+  }
+  if (isShape && shapeExt && formatBlocks < 3) {
+    throw new Error('LCC format band: extended shape layer requires 3 blocks');
+  }
+  const actualModeId = isShape ? 7 : modeId;
+  const paletteBits = isShape ? (shapeLayerId & 3) : paletteBitsOf(paletteMode, harmony);
+  const flag = isShape ? (shapeExt ? 1 : 0) : (compressed || encrypted ? 1 : 0);
   let bits;
   if (formatBlocks === 1) {
-    bits = [...bitsOf(modeId, 3), ...bitsOf(eccIndex, 2)];
+    bits = [...bitsOf(actualModeId, 3), ...bitsOf(eccIndex, 2)];
   } else if (formatBlocks === 2) {
     bits = [
-      ...bitsOf(modeId, 3),
+      ...bitsOf(actualModeId, 3),
       ...bitsOf(eccIndex, 2),
       constraint ? 1 : 0,
       ...bitsOf(paletteBits, 2),
@@ -60,12 +71,12 @@ export function packFormatPayload({
     ];
   } else {
     bits = [
-      ...bitsOf(modeId, 3),
+      ...bitsOf(actualModeId, 3),
       ...bitsOf(eccIndex, 2),
       constraint ? 1 : 0,
       ...bitsOf(paletteBits, 2),
       ...bitsOf(seed & 63, 6),
-      compressed || encrypted ? 1 : 0,
+      flag,
     ];
   }
   const chunks = [];
@@ -94,9 +105,25 @@ export function unpackFormatPayload(chunks, formatBlocks) {
   }
   if (formatBlocks === 2) {
     const paletteBits = valueOf(bits, 6, 2);
+    if (modeId === 7) {
+      return {
+        modeId,
+        eccIndex,
+        shapeLayerId: paletteBits,
+        shapeExt: 0,
+        paletteMode: 'maxmin',
+        harmony: false,
+        seed: valueOf(bits, 8, 2),
+        constraint: bits[5] === 1,
+        compressed: false,
+        encrypted: false,
+      };
+    }
     return {
       modeId,
       eccIndex,
+      shapeLayerId: null,
+      shapeExt: 0,
       paletteMode: paletteBits === 1 ? 'harmony' : 'maxmin',
       harmony: paletteBits === 1,
       seed: valueOf(bits, 8, 2),
@@ -108,9 +135,25 @@ export function unpackFormatPayload(chunks, formatBlocks) {
   const paletteBits = valueOf(bits, 6, 2);
   const seed = valueOf(bits, 8, 6);
   const flag = bits[14] === 1;
+  if (modeId === 7) {
+    return {
+      modeId,
+      eccIndex,
+      shapeLayerId: paletteBits,
+      shapeExt: flag ? 1 : 0,
+      paletteMode: 'maxmin',
+      harmony: false,
+      seed,
+      constraint: bits[5] === 1,
+      compressed: false,
+      encrypted: false,
+    };
+  }
   return {
     modeId,
     eccIndex,
+    shapeLayerId: null,
+    shapeExt: 0,
     paletteMode: paletteBits === 1 ? 'harmony' : 'maxmin',
     harmony: paletteBits === 1,
     seed,

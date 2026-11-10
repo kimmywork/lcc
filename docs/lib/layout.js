@@ -60,6 +60,11 @@ export function calibrationSampleCount(layerName, N) {
   const layer = LAYERS[layerName];
   if (!layer || layerName === 'L1') return 0;
   if (layer.kind === 'gray') return 0;
+  if (layer.shapeSetSize) {
+    const count = layer.colors ?? 0;
+    if (count <= 8) return count;
+    return N < 33 ? 8 : count;
+  }
   if (layerName === 'L3c') return 16;
   if (layerName === 'L3d') return N < 33 ? 16 : 32;
   if (layerName === 'L4e') return N < 33 ? 16 : N < 57 ? 32 : 64;
@@ -127,6 +132,8 @@ export function makeLayout({
   const fixed = new Int16Array(N * N).fill(-1);
   const fixedColor = new Uint8Array(N * N * 3);
   const hasFixedColor = new Uint8Array(N * N);
+  const fixedShape = new Int8Array(N * N).fill(-1);
+  const hasFixedShape = new Uint8Array(N * N);
 
   const setSymbol = (r, c, symbol) => {
     if (r < 0 || r >= N || c < 0 || c >= N) return;
@@ -134,6 +141,8 @@ export function makeLayout({
     mask[i] = 1;
     fixed[i] = symbol;
     hasFixedColor[i] = 0;
+    hasFixedShape[i] = 0;
+    fixedShape[i] = -1;
   };
   const setColor = (r, c, rgb) => {
     if (r < 0 || r >= N || c < 0 || c >= N) return;
@@ -144,6 +153,20 @@ export function makeLayout({
     fixedColor[i * 3] = rgb[0];
     fixedColor[i * 3 + 1] = rgb[1];
     fixedColor[i * 3 + 2] = rgb[2];
+    hasFixedShape[i] = 0;
+    fixedShape[i] = -1;
+  };
+  const setShape = (r, c, shapeIndex, rgb) => {
+    if (r < 0 || r >= N || c < 0 || c >= N) return;
+    const i = r * N + c;
+    mask[i] = 1;
+    fixed[i] = -1;
+    hasFixedColor[i] = 1;
+    fixedColor[i * 3] = rgb[0];
+    fixedColor[i * 3 + 1] = rgb[1];
+    fixedColor[i * 3 + 2] = rgb[2];
+    hasFixedShape[i] = 1;
+    fixedShape[i] = shapeIndex;
   };
 
   // --- finders + separators -------------------------------------------------
@@ -209,6 +232,7 @@ export function makeLayout({
   let hub = null;
   const grayBlocks = [];
   const paletteBlocks = [];
+  const shapeBlocks = [];
   const endpointBlocks = [];
   if (layerName !== 'L1') {
     const paletteCount = calibrationSampleCount(layerName, N);
@@ -216,8 +240,10 @@ export function makeLayout({
     const grayLevels = layer.kind === 'gray' ? layer.levels : 16;
     const graySide = Math.ceil(Math.sqrt(grayLevels));
     const grayColors = layer.kind === 'gray' ? palette.palette : palette.grayPalette;
-    const hubW = graySide + paletteSide + 2;
-    const hubH = Math.max(graySide, paletteSide) + 2;
+    const shapeCount = layer.shapeSetSize > 1 ? layer.shapeSetSize : 0;
+    const shapeSide = shapeCount === 0 ? 0 : Math.ceil(Math.sqrt(shapeCount));
+    const hubW = graySide + paletteSide + shapeSide + 2;
+    const hubH = Math.max(graySide, paletteSide, shapeSide) + 2;
     const hubRow = Math.floor((N - hubH) / 2);
     const hubCol = Math.floor((N - hubW) / 2);
     hub = { row: hubRow, col: hubCol, w: hubW, h: hubH };
@@ -259,6 +285,22 @@ export function makeLayout({
         setSymbol(r, c, whiteSym);
       }
     }
+
+    // Shape reference tiles: each of the eight patterns in a fixed black
+    // background, used to estimate the PSF / line width on the decoder side.
+    if (shapeSide > 0) {
+      for (let i = 0; i < shapeCount; i++) {
+        const r = hubRow + 1 + Math.floor(i / shapeSide);
+        const c = hubCol + 1 + graySide + paletteSide + (i % shapeSide);
+        setShape(r, c, i, [0, 0, 0]);
+        shapeBlocks.push({ row: r, col: c, shape: i, rgb: [0, 0, 0] });
+      }
+      for (let i = shapeCount; i < shapeSide * shapeSide; i++) {
+        const r = hubRow + 1 + Math.floor(i / shapeSide);
+        const c = hubCol + 1 + graySide + paletteSide + (i % shapeSide);
+        setSymbol(r, c, whiteSym);
+      }
+    }
   }
 
   // --- data cells in Hilbert order -----------------------------------------
@@ -281,6 +323,8 @@ export function makeLayout({
     fixed,
     fixedColor,
     hasFixedColor,
+    fixedShape,
+    hasFixedShape,
     dataCoords,
     functionCount,
     dataCount: dataCoords.length,
@@ -289,6 +333,7 @@ export function makeLayout({
     alignment,
     grayBlocks,
     paletteBlocks,
+    shapeBlocks,
     endpointBlocks,
     finders,
     blackSymbol: blackSym,

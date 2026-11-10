@@ -98,9 +98,117 @@ export const LAYERS = {
     camera: false,
     description: '256 max-min DeltaE colors',
   },
+
+  // --- shape ladder ---------------------------------------------------------
+  // These layers are written with mode=7 (shape escape) and a shape-layer id.
+  // L3b is the "no pattern" 8-colour base; L1s/L2s/L3s/L3t add the 8-shape
+  // dimension on top of B/W, 4-gray, 8-color and 16-color respectively.
+  L3b: {
+    id: 7,
+    name: 'L3b',
+    kind: 'color',
+    colors: 8,
+    paletteSize: 8,
+    bitsPerModule: 3,
+    ecc: 0.30,
+    defaultConstraint: false,
+    camera: true,
+    shapeSetSize: 1,
+    shapeLayerId: 0,
+    shapeExt: 0,
+    minVersion: 2,
+    minModulePx: 8,
+    description: '8 max-min colors, no pattern',
+  },
+  L1s: {
+    id: 7,
+    name: 'L1s',
+    kind: 'gray',
+    levels: 2,
+    paletteSize: 2,
+    bitsPerModule: 4,
+    ecc: 0.20,
+    defaultConstraint: false,
+    camera: true,
+    shapeSetSize: 8,
+    shapeLayerId: 1,
+    shapeExt: 0,
+    minVersion: 2,
+    minModulePx: 12,
+    description: '2-state B/W + 8 shapes',
+  },
+  L2s: {
+    id: 7,
+    name: 'L2s',
+    kind: 'gray',
+    levels: 4,
+    paletteSize: 4,
+    bitsPerModule: 5,
+    ecc: 0.20,
+    defaultConstraint: false,
+    camera: true,
+    shapeSetSize: 8,
+    shapeLayerId: 2,
+    shapeExt: 0,
+    minVersion: 2,
+    minModulePx: 12,
+    description: '4-level gray + 8 shapes',
+  },
+  L3s: {
+    id: 7,
+    name: 'L3s',
+    kind: 'color',
+    colors: 8,
+    paletteSize: 8,
+    bitsPerModule: 6,
+    ecc: 0.30,
+    defaultConstraint: false,
+    camera: true,
+    shapeSetSize: 8,
+    shapeLayerId: 3,
+    shapeExt: 0,
+    minVersion: 2,
+    minModulePx: 12,
+    description: '8 max-min colors + 8 shapes',
+  },
+  L3t: {
+    id: 7,
+    name: 'L3t',
+    kind: 'color',
+    colors: 16,
+    paletteSize: 16,
+    bitsPerModule: 7,
+    ecc: 0.35,
+    defaultConstraint: false,
+    camera: true,
+    shapeSetSize: 8,
+    shapeLayerId: 3,
+    shapeExt: 1,
+    minVersion: 10,
+    minModulePx: 16,
+    description: '16 max-min colors + 8 shapes',
+  },
 };
 
-export const LAYER_BY_ID = new Map(Object.values(LAYERS).map((l) => [l.id, l]));
+// Shape layers use the mode=7 escape and are not addressable by a 3-bit mode
+// id.  Keep LAYER_BY_ID for the normal layers only.
+export const LAYER_BY_ID = new Map(
+  Object.values(LAYERS).filter((l) => !l.shapeSetSize).map((l) => [l.id, l]),
+);
+
+export const SHAPE_LAYER_IDS = [0, 1, 2, 3];
+
+export const SHAPE_LAYER_BY_ID = new Map([
+  [0, 'L3b'],
+  [1, 'L1s'],
+  [2, 'L2s'],
+  [3, 'L3s'],
+]);
+
+export function resolveShapeLayer(shapeLayerId, shapeExt = 0) {
+  if (shapeLayerId === 3 && shapeExt) return 'L3t';
+  return SHAPE_LAYER_BY_ID.get(shapeLayerId) ?? null;
+}
 
 export const ECC_LEVELS = [0.20, 0.30, 0.35, 0.40];
 export const ECC_NAMES = ['L', 'M', 'Q', 'H'];

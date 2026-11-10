@@ -56,6 +56,33 @@ export function robustThreshold(gray) {
   return { threshold, min, max, contrast: max - min };
 }
 
+export function sampleImageBilinear(image, x, y) {
+  const { width, height, data } = image;
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = x - x0;
+  const fy = y - y0;
+  const x1 = x0 + 1;
+  const y1 = y0 + 1;
+  const px = (xx, yy) => {
+    const cx = xx < 0 ? 0 : xx >= width ? width - 1 : xx;
+    const cy = yy < 0 ? 0 : yy >= height ? height - 1 : yy;
+    const p = (cy * width + cx) * 3;
+    return [data[p], data[p + 1], data[p + 2]];
+  };
+  const p00 = px(x0, y0);
+  const p10 = px(x1, y0);
+  const p01 = px(x0, y1);
+  const p11 = px(x1, y1);
+  const w00 = (1 - fx) * (1 - fy);
+  const w10 = fx * (1 - fy);
+  const w01 = (1 - fx) * fy;
+  const w11 = fx * fy;
+  return [0, 1, 2].map((ch) => Math.round(
+    p00[ch] * w00 + p10[ch] * w10 + p01[ch] * w01 + p11[ch] * w11,
+  ));
+}
+
 export function sampleImage(image, x, y, radius = 1) {
   const { width, height, data } = image;
   const cx = Math.round(x);

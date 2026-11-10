@@ -68,20 +68,26 @@ function decodeMetaText(result) {
 function friendlyError(error) {
   const meta = error?.lccMeta;
   if (meta) {
-    if (meta.layer === 'L1' || meta.layer === 'L2a' || meta.layer === 'L3c') {
+    if (meta.shapeSetSize > 1) {
+      return `检测到 ${meta.layer} 形状码，但纠错失败：形状层需要更大模块（建议 16px）和更清晰的画面；请靠近、保持对焦、避开运动模糊。`;
+    }
+    if (meta.layer === 'L1' || meta.layer === 'L2a' || meta.layer === 'L3b' || meta.layer === 'L3c') {
       return `检测到 ${meta.layer} 码，但纠错失败：请靠近、保持清晰、避开反光。`;
     }
     if (meta.layer === 'L2b') {
       const c = meta.constraint ? '，且开启了 constraint' : '';
-      return `L2b 是支持的；这次是真实纠错失败（检测到 L2b 8 灰${c}）。8 灰间距较小，强反光/摩尔纹下容易跨级；请换角度/靠近，或改用 L2a（4 灰）或 L3c（16 色）+ constraint off。`;
+      return `L2b 是支持的；这次是真实纠错失败（检测到 L2b 8 灰${c}）。8 灰间距较小，强反光/摩尔纹下容易跨级；请换角度/靠近，或改用 L2a（4 灰）或 L3b/L3c + constraint off。`;
     }
     const extra = meta.constraint ? '，且开启了 constraint' : '';
-    return `检测到 ${meta.layer} 多级色码${extra}；摄像头建议 L3c/L3d，L4e/L4f 仅用于清洁/数字/打印。`;
+    return `检测到 ${meta.layer} 多级色码${extra}；摄像头建议 L3b/L3c/L3s，L4e/L4f 仅用于清洁/数字/打印。`;
   }
   const msg = String(error?.message ?? error);
   if (msg.includes('no contrast')) return '画面没有足够对比度，请对准码面并避免过曝。';
   if (msg.includes('not enough')) return '没有找到 LCC 定位图案，请让码面完整进入画面。';
   if (msg.includes('format band')) return '格式带读取失败，请靠近一点或换一个角度。';
+  if (msg.includes('version range does not fit')) {
+    return 'L3t 需要 N≥57：请把画布调到 2048，或把静区调到 2；其他形状层可适当减小静区。';
+  }
   if (msg.includes('RS:')) return '纠错失败：屏幕反光/高光削顶会破坏多级灰/彩。摄像头场景请改用 L1 黑白 + constraint off，或换角度避开反光。';
   if (msg.includes('constraint')) return '约束解码失败；摄像头场景请生成 constraint off 的码面。';
   return msg;
@@ -94,6 +100,9 @@ function renderStats(container, meta) {
     ['模块', `${meta.moduleSize}px`],
     ['静区', `${meta.quietZone ?? '—'} 模块`],
     ['色板', `${meta.paletteSize} 色 · min ΔE ${Number(meta.minDeltaE).toFixed(1)}`],
+    ['形态', meta.shapeSetSize > 1
+      ? `${meta.shapeSetSize} 种 · ${meta.shapeBits} bit`
+      : '无图案'],
     ['ECC', `${meta.eccLevel ?? '—'} (${(meta.ecc * 100).toFixed(0)}%)`],
     ['约束', meta.constraint
       ? `on · rank ${meta.constraintRankCount} / Δ≤${meta.constraintMaxDiff}`
@@ -115,6 +124,9 @@ function renderScanStats(container, meta) {
     ['版本', `v${meta.version} / N=${meta.N}`],
     ['模块', `${Number(meta.moduleSize).toFixed(2)}px`],
     ['色板', `${meta.paletteSize} 色 · min ΔE ${Number(meta.minDeltaE).toFixed(1)}`],
+    ['形态', meta.shapeSetSize > 1
+      ? `${meta.shapeSetSize} 种 · ${meta.shapeBits} bit`
+      : '无图案'],
     ['ECC', `${meta.eccLevel ?? '—'} (${(meta.ecc * 100).toFixed(0)}%)`],
     ['约束', meta.constraint
       ? `on · rank ${meta.constraintRankCount} / Δ≤${meta.constraintMaxDiff}`
@@ -365,6 +377,23 @@ document.getElementById('cameraColorPreset').addEventListener('click', () => {
   setStatus('已切换到摄像头彩色预设：L3c（16 色，min ΔE ≈ 49）+ Q + Boost ECC + 静区 4。', '');
 });
 
+document.getElementById('cameraShapePreset').addEventListener('click', () => {
+  $('layer').value = 'L3s';
+  $('palette').value = 'maxmin';
+  $('mode').value = 'fill';
+  $('size').value = '1024';
+  $('constraint').checked = false;
+  $('ecc').value = 'Q';
+  $('boostEcc').checked = true;
+  $('quietZone').value = '4';
+  $('moduleSize').value = '16';
+  $('minVersion').value = '1';
+  $('maxVersion').value = '100';
+  if (!textEl.value.trim()) textEl.value = 'https://example.com/lcc';
+  generate();
+  setStatus('已切换到摄像头形态预设：L3s（8 色 + 8 形态，6 bit）+ Q + 静区 4，模块 16px。', '');
+});
+
 document.querySelectorAll('[data-example]').forEach((btn) => {
   btn.addEventListener('click', async () => {
     try {
@@ -383,7 +412,7 @@ document.querySelectorAll('[data-example]').forEach((btn) => {
       $('maxVersion').value = '100';
       $('size').value = name.includes('金刚经') ? '2048' : '1024';
       generate();
-      setStatus(`已加载示例：${name}。摄像头场景建议使用 L1/L2a/L3c + constraint off。`, '');
+      setStatus(`已加载示例：${name}。摄像头场景建议使用 L1/L2a/L3b/L3c/L3s + constraint off。`, '');
     } catch (e) {
       setStatus(friendlyError(e), 'err');
     }

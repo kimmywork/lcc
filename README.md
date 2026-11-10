@@ -9,10 +9,13 @@ LCC 是一套方形、分层、按信道能力换符号表的二维图形码。�
 
 ## 层级
 
+### 基础层：无图案
+
 | 层 | 符号表 | bit/模块 | ECC | 摄像头建议 |
 | --- | --- | --- | --- | --- |
 | **L1** | 2 态黑白 | 1 | 20% | **首选** |
 | **L2a** | 4 级等 L\* 灰 | 2 | 20% | **推荐** |
+| **L3b** | 8 色 max-min ΔE | 3 | 30% | 推荐 |
 | **L2b** | 8 级等 L\* 灰 | 3 | 30% | 受控拍摄 |
 | **L3c** | 16 色 max-min ΔE | 4 | 35% | **摄像头彩色首选** |
 | **L3d** | 32 色 max-min ΔE | 5 | 40% | 受控拍摄 |
@@ -20,12 +23,40 @@ LCC 是一套方形、分层、按信道能力换符号表的二维图形码。�
 | **L4f** | 256 色 max-min ΔE | 8 | 40% | 清洁/数字/打印 |
 | **File** | 24bit 真彩 | 24 | CRC32 | 纯数字，独立模式 |
 
+### 形状层：8 个线形态
+
+形状层在每个模块内叠加 8 种图案之一：空白、`/`、`\`、`X`、`+`、`-`、`|`、`□`，因此增加 3 bit/模块。图案使用与背景色对比度最高的前景色（互补色，或黑/白）。
+
+| 层 | 背景符号表 | 形状 | bit/模块 | 建议 |
+| --- | --- | --- | --- | --- |
+| **L1s** | 2 态黑白 | 8 | 4 | 灰度摄像头 |
+| **L2s** | 4 级灰 | 8 | 5 | 灰度摄像头/打印 |
+| **L3s** | 8 色 | 8 | 6 | **彩色摄像头首选** |
+| **L3t** | 16 色 | 8 | 7 | 受控拍摄/打印，`N≥57` |
+
+### 1–7 bit 阶梯
+
+| bit/模块 | 方案 |
+| ---: | --- |
+| 1 | L1（黑白） |
+| 2 | L2a（4 灰） |
+| 3 | L3b（8 色）或 L2b（8 灰） |
+| 4 | L3c（16 色）或 L1s（黑白 + 8 形态） |
+| 5 | L2s（4 灰 + 8 形态）或 L3d（32 色） |
+| 6 | L3s（8 色 + 8 形态）或 L4e（64 色） |
+| 7 | L3t（16 色 + 8 形态） |
+| 8 | L4f（256 色，数字/打印） |
+
+> 形状层需要更大的模块：4 px 只适合纯颜色层；摄像头建议 16 px，数字/打印至少 8–12 px。
+> L3t 需要 `N≥57`：1024 画布 + 静区 4 + 16 px 放不下，请用 2048 画布或把静区调到 2。
+
 色板的**最小两两 ΔE** 决定摄像头鲁棒性（实测）：
 
 | 层 | 最小 ΔE |
 | --- | ---: |
 | L2a（4 灰） | 33.2 |
 | L2b（8 灰） | 14.2 |
+| L3b（8 色） | 80.2 |
 | L3c（16 色） | **48.8** |
 | L3d（32 色） | 35.7 |
 | L4e（64 色） | 25.0 |
@@ -69,7 +100,7 @@ npm run qr:examples
 
 | 维度 | LCC | QRCode |
 | --- | --- | --- |
-| 模块 / 符号 | 方形；L1–L4f，1–8 bit/模块 | 黑白二值，1 bit/模块 |
+| 模块 / 符号 | 方形；1–7 bit 阶梯（L4f 为 8 bit） | 黑白二值，1 bit/模块 |
 | 颜色 | L3c/L3d/L4e/L4f 彩色 | 单色 |
 | 定位图案 | `1:2:1:2:1` 自定义方环 | `1:1:3:1:1` |
 | 校准 | 灰阶/色板校准枢纽 | 无（二值阈值） |
@@ -85,6 +116,8 @@ npm run qr:examples
 ## 特性
 
 - **方形动态版本**：`N = 21 + 4(v-1)`，`v=1..100`；最小模块 4px，fill 模式自动铺满画布。
+- **形状维度**：每个模块可叠加 8 种线形态（空白、`/`、`\`、`X`、`+`、`-`、`|`、`□`），在基础色板上增加 3 bit/模块，形成 1–7 bit 阶梯。
+- **高对比前景**：形状使用背景色的互补色或黑/白中对比度最高的颜色，避免中灰互补色消失。
 - **自定义定位图案**：`1:2:1:2:1` 同心方环，和 QR 的 `1:1:3:1:1` 明显区分。
 - **BR 对齐图案**：`N≥25` 提供第四个单应锚点。
 - **真 RS(GF(256))**：系统码、分块、交织、Berlekamp-Massey 解码。
@@ -102,6 +135,7 @@ npm run qr:examples
 ```bash
 node src/cli.js encode --input "Hello LCC" --output hello.png --layer L1
 node src/cli.js encode --input "彩色" --output color.png --layer L3c --size 1024 --no-constraint
+node src/cli.js encode --input "形状" --output shape.png --layer L3s --size 1024 --module-size 16
 node src/cli.js decode --input color.png
 node src/cli.js info
 ```
@@ -112,11 +146,12 @@ node src/cli.js info
 import { encode, decodeAuto } from './src/index.js';
 
 const result = encode('Hello, LCC!', {
-  layer: 'L3c',           // L1 | L2a | L2b | L3c | L3d | L4e | L4f
+  layer: 'L3s',           // L1 | L2a | L3b | L3c | L1s | L2s | L3s | L3t | ...
   width: 1024,
   height: 1024,
   mode: 'fill',
   paletteMode: 'maxmin',  // 'maxmin' | 'harmony'
+  moduleSize: 16,         // 形状层建议 16px
   constraint: false,      // 摄像头建议 false
 });
 
@@ -156,7 +191,7 @@ Web 编码面板的“高级设置”里可以直接调这些参数；生成后�
 
 ## 研究
 
-- [LCC vs Cimbar：差距、形状维度与增强路线](docs/research/cimbar-vs-lcc-and-shape.md)：Cimbar 对比、形状 + 颜色符号设计草案、验证计划与风险。**形状维度尚未实现。**
+- [LCC vs Cimbar：差距、形状维度与增强路线](docs/research/cimbar-vs-lcc-and-shape.md)：Cimbar 对比、形状 + 颜色符号设计草案、验证计划与风险。形状维度已按“线形态”方案实现；报告保留为研究记录。
 
 ## Web 版 / GitHub Pages
 
@@ -179,9 +214,11 @@ Web 版在 `docs/`：
 
 ## 摄像头建议
 
-- **L1 / L2a / L3c**：首选。
-- **L2b / L3d**：受控拍摄，避开屏幕高光和强反光。
+- **L1 / L2a / L3b / L3c / L3s**：首选。
+- **L2b / L3d / L1s / L2s**：受控拍摄，避开屏幕高光和强反光。
+- **L3t**：受控拍摄/打印，建议 `N≥57`、模块 ≥16 px。
 - **L4e / L4f**：清洁截图、文件、数字、打印；不建议随手拍。
+- 形状层需要更大模块：4 px 只适合纯颜色层，摄像头建议 16 px。
 - 摄像头场景关闭 constraint；清洁数字码可以开启。
 - 多级灰/彩在强反光/高光削顶下仍可能丢级；这不是 finder 检测问题，而是多级量化问题。
 
@@ -198,6 +235,7 @@ src/
   calibration.js     L1/灰/彩校准
   layout.js          finder / 对齐 / 格式带 / 枢纽 / Hilbert
   palettes.js        gray / max-min ΔE 色板
+  shapes.js          8 种线形态、前景色、2-means/模板匹配
   constraint.js      可逆邻差约束（参数化 rank）
   ecc/               GF(256) / RS / BCH / CRC32
   png.js             Node PNG I/O
@@ -213,7 +251,8 @@ scripts/             build:web / 本地静态服务 / QR 对比图
 - L2b/L3d 在强反光/高光削顶下仍可能失败；摄像头首选 L1/L2a/L3c。
 - L4e/L4f 面向清洁/数字/打印，不建议随手拍。
 - File Mode（24bit 真彩）尚未实现。
-- 形状维度（shape + color）尚未实现；设计见 [研究文档](docs/research/cimbar-vs-lcc-and-shape.md)。
+- 形状层已实现（L3b/L1s/L2s/L3s/L3t），但真实相机/打印 benchmark 尚未完成；4 px 模块不支持形状，摄像头建议 16 px。
+- L3t（16 色 + 8 形态，7 bit）需要 `N≥57`，模块建议 ≥16 px。
 - 多帧/喷泉码尚未实现。
 - 打印链路未实测；真实打印需要逐机校准。
 - 不做 QR 兼容；finder 比例 1:2:1:2:1。

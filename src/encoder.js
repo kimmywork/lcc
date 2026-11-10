@@ -25,6 +25,7 @@ import { buildFrame } from './frame.js';
 import { packFormatPayload, writeFormatBand } from './format/format-band.js';
 import { makeLayout } from './layout.js';
 import { generatePalette } from './palettes.js';
+import { foregroundFor, shapeMask } from './shapes.js';
 import { makeWhitening } from './whitening.js';
 
 function resolveEcc(option, layer) {
@@ -176,37 +177,54 @@ export function chooseVersionAndScale({
   throw new Error('LCC: payload does not fit even at the minimum module size');
 }
 
-function render(symbols, layout, palette, moduleSize, quietZone) {
+function paintModule(data, size, x0, y0, moduleSize, background, shapeIndex) {
+  const foreground = shapeIndex >= 0 ? foregroundFor(background) : null;
+  const mask = shapeIndex >= 0 ? shapeMask(shapeIndex, moduleSize) : null;
+  for (let dy = 0; dy < moduleSize; dy++) {
+    let p = ((y0 + dy) * size + x0) * 3;
+    for (let dx = 0; dx < moduleSize; dx++) {
+      const on = mask ? mask[dy * moduleSize + dx] : 0;
+      const color = on ? foreground : background;
+      data[p++] = color[0];
+      data[p++] = color[1];
+      data[p++] = color[2];
+    }
+  }
+}
+
+function render(symbols, layout, palette, moduleSize, quietZone, layer) {
   const N = layout.N;
   const size = (N + 2 * quietZone) * moduleSize;
   const data = new Uint8Array(size * size * 3).fill(255);
+  const colorCount = palette.length;
+  const shapeSetSize = layer?.shapeSetSize ?? 1;
   for (let r = 0; r < N; r++) {
     for (let c = 0; c < N; c++) {
       const i = r * N + c;
-      let color;
+      let background;
+      let shapeIndex = -1;
       if (layout.hasFixedColor[i]) {
-        color = [
+        background = [
           layout.fixedColor[i * 3],
           layout.fixedColor[i * 3 + 1],
           layout.fixedColor[i * 3 + 2],
         ];
+        if (layout.hasFixedShape[i]) shapeIndex = layout.fixedShape[i];
       } else {
         const sym = symbols[i];
-        if (sym < 0 || sym >= palette.length) {
+        if (sym < 0 || sym >= shapeSetSize * colorCount) {
           throw new Error(`LCC: invalid symbol at (${r},${c})`);
         }
-        color = palette[sym];
+        if (shapeSetSize > 1) {
+          shapeIndex = Math.floor(sym / colorCount);
+          background = palette[sym % colorCount];
+        } else {
+          background = palette[sym];
+        }
       }
       const y0 = (r + quietZone) * moduleSize;
       const x0 = (c + quietZone) * moduleSize;
-      for (let dy = 0; dy < moduleSize; dy++) {
-        let p = ((y0 + dy) * size + x0) * 3;
-        for (let dx = 0; dx < moduleSize; dx++) {
-          data[p++] = color[0];
-          data[p++] = color[1];
-          data[p++] = color[2];
-        }
-      }
+      paintModule(data, size, x0, y0, moduleSize, background, shapeIndex);
     }
   }
   return { width: size, height: size, data };
@@ -217,16 +235,17 @@ export function encode(payload, options = {}) {
   const layer = LAYERS[layerName];
   if (!layer) throw new Error(`LCC: unknown layer ${layerName}`);
 
-  const paletteMode = options.paletteMode ?? 'maxmin';
-  const harmony = options.harmony ?? false;
+  const isShapeLayer = !!layer.shapeSetSize;
+  const paletteMode = isShapeLayer ? 'maxmin' : (options.paletteMode ?? 'maxmin');
+  const harmony = isShapeLayer ? false : (options.harmony ?? false);
   let constraint = options.constraint ?? layer.defaultConstraint;
-  if (layerName === 'L1') constraint = false;
+  if (layerName === 'L1' || isShapeLayer) constraint = false;
 
   const mode = options.mode ?? 'fill';
   const width = options.width ?? 1024;
   const height = options.height ?? 1024;
   const quietZone = options.quietZone ?? QUIET_ZONE.screen;
-  const minModulePx = options.minModulePx ?? MIN_MODULE_PX;
+  const minModulePx = Math.max(options.minModulePx ?? MIN_MODULE_PX, layer.minModulePx ?? 0);
   const maxModulePx = options.maxModulePx ?? MAX_MODULE_PX;
   const baseEcc = resolveEcc(options.eccLevel, layer);
   const boostEcc = options.boostEcc ?? false;
@@ -237,9 +256,13 @@ export function encode(payload, options = {}) {
     : new Uint8Array(payload);
 
   let paletteInfo = generatePalette(layerName, { mode: paletteMode, harmony });
-  const richFormat = layer.kind === 'color' || constraint || (options.seed ?? 0) !== 0
-    || paletteMode !== 'maxmin' || harmony;
-  const minVersion = Math.max(options.minVersion ?? 1, richFormat ? 2 : 1);
+  const richFormat = isShapeLayer || layer.kind === 'color' || constraint
+    || (options.seed ?? 0) !== 0 || paletteMode !== 'maxmin' || harmony;
+  const minVersion = Math.max(
+    options.minVersion ?? 1,
+    richFormat ? 2 : 1,
+    layer.minVersion ?? 1,
+  );
   const maxVersion = options.maxVersion ?? 100;
   if (minVersion < 1 || maxVersion > 100 || maxVersion < minVersion) {
     throw new Error('LCC: invalid version range');
@@ -326,10 +349,14 @@ export function encode(payload, options = {}) {
     symbols[r * layout.N + c] = dataSymbols[i];
   }
 
+  if (isShapeLayer && layer.shapeExt && formatBlocks < 3) {
+    throw new Error('LCC: this shape layer requires N >= 57');
+  }
+
   const eccIndex = ECC_LEVELS.indexOf(ecc);
   const chunks = packFormatPayload({
     formatBlocks,
-    modeId: layer.id,
+    modeId: isShapeLayer ? 7 : layer.id,
     eccIndex,
     paletteMode,
     harmony,
@@ -337,10 +364,19 @@ export function encode(payload, options = {}) {
     constraint,
     compressed: !!options.compressed,
     encrypted: !!options.encrypted,
+    shapeLayerId: isShapeLayer ? layer.shapeLayerId : null,
+    shapeExt: isShapeLayer ? layer.shapeExt : 0,
   });
   writeFormatBand(symbols, layout, chunks);
 
-  const image = render(symbols, layout, paletteInfo.palette, chosenModuleSize, quietZone);
+  const image = render(
+    symbols,
+    layout,
+    paletteInfo.palette,
+    chosenModuleSize,
+    quietZone,
+    layer,
+  );
 
   const actualBitsPerModule = layerName === 'L1'
     ? 1
@@ -376,6 +412,12 @@ export function encode(payload, options = {}) {
       payloadCapacity: cap.payloadCapacity,
       payloadSize: payloadBytes.length,
       formatBlocks,
+      shapeLayer: isShapeLayer,
+      shapeLayerId: isShapeLayer ? layer.shapeLayerId : null,
+      shapeExt: isShapeLayer ? layer.shapeExt : 0,
+      shapeSetSize: layer.shapeSetSize ?? 1,
+      shapeBits: isShapeLayer ? Math.log2(layer.shapeSetSize) : 0,
+      colorCount: layer.paletteSize,
     },
   };
 }
