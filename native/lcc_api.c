@@ -82,7 +82,7 @@ int lcc_api_stack(const uint8_t *input, int input_len) {
   double noise = 0;
   const int status = lcc_stack_frames(
     frames, dets, count, quiet, module, max_dimension, noise_stride,
-    &rgb, &w, &h, &frames_used, &stacked, &noise, &version, &N, &module_out, &quiet_out);
+    &rgb, &w, &h, &frames_used, &stacked, &noise, &version, &N, &module_out, &quiet_out, NULL);
   lcc_release(frames);
   lcc_release(dets);
   const int header = 48;

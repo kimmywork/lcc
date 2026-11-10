@@ -1,5 +1,6 @@
 node_modules/
 .zig-cache/
+.em-cache/
 __pycache__/
 *.pyc
 .DS_Store

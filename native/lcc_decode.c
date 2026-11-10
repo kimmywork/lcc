@@ -1,9 +1,14 @@
 #include "lcc_internal.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(__wasm_simd128__)
+#include <wasm_simd128.h>
+#endif
 
 static const char *AXIS_NAMES[] = {
   "value-otsu", "value-otsu+close", "otsu", "otsu+close",
@@ -758,45 +763,67 @@ static void sharpen_residual(double *res, int n) {
   for (int i = 0; i < n * n; i++) res[i] += 0.8 * (res[i] - blurred[i]);
 }
 
-static double ncc_at(const double *res, const uint8_t *mask, int n, int dx, int dy) {
-  const int N = n * n;
+static double ncc_vec(const double *res, const double *mask, int count) {
   double sum_r = 0;
   double sum_m = 0;
-  for (int y = 0; y < n; y++) {
-    for (int x = 0; x < n; x++) {
-      const int tx = x + dx;
-      const int ty = y + dy;
-      const double m = tx >= 0 && ty >= 0 && tx < n && ty < n ? mask[ty * n + tx] : 0;
-      sum_r += res[y * n + x];
-      sum_m += m;
+  int i = 0;
+#if defined(__wasm_simd128__)
+  if (((uintptr_t)res & 15) == 0 && ((uintptr_t)mask & 15) == 0) {
+    v128_t sr = wasm_f64x2_splat(0);
+    v128_t sm = wasm_f64x2_splat(0);
+    for (; i + 2 <= count; i += 2) {
+      sr = wasm_f64x2_add(sr, wasm_v128_load(res + i));
+      sm = wasm_f64x2_add(sm, wasm_v128_load(mask + i));
     }
+    sum_r = wasm_f64x2_extract_lane(sr, 0) + wasm_f64x2_extract_lane(sr, 1);
+    sum_m = wasm_f64x2_extract_lane(sm, 0) + wasm_f64x2_extract_lane(sm, 1);
   }
-  const double mean_r = sum_r / N;
-  const double mean_m = sum_m / N;
+#endif
+  for (; i < count; i++) {
+    sum_r += res[i];
+    sum_m += mask[i];
+  }
+  const double mean_r = sum_r / count;
+  const double mean_m = sum_m / count;
   double num = 0, dr = 0, dm = 0;
-  for (int y = 0; y < n; y++) {
-    for (int x = 0; x < n; x++) {
-      const int tx = x + dx;
-      const int ty = y + dy;
-      const double m = tx >= 0 && ty >= 0 && tx < n && ty < n ? mask[ty * n + tx] : 0;
-      const double ar = res[y * n + x] - mean_r;
-      const double am = m - mean_m;
-      num += ar * am;
-      dr += ar * ar;
-      dm += am * am;
+  i = 0;
+#if defined(__wasm_simd128__)
+  if (((uintptr_t)res & 15) == 0 && ((uintptr_t)mask & 15) == 0) {
+    const v128_t mr = wasm_f64x2_splat(mean_r);
+    const v128_t mm = wasm_f64x2_splat(mean_m);
+    v128_t nsum = wasm_f64x2_splat(0);
+    v128_t rsum = wasm_f64x2_splat(0);
+    v128_t msum = wasm_f64x2_splat(0);
+    for (; i + 2 <= count; i += 2) {
+      const v128_t ar = wasm_f64x2_sub(wasm_v128_load(res + i), mr);
+      const v128_t am = wasm_f64x2_sub(wasm_v128_load(mask + i), mm);
+      nsum = wasm_f64x2_add(nsum, wasm_f64x2_mul(ar, am));
+      rsum = wasm_f64x2_add(rsum, wasm_f64x2_mul(ar, ar));
+      msum = wasm_f64x2_add(msum, wasm_f64x2_mul(am, am));
     }
+    num = wasm_f64x2_extract_lane(nsum, 0) + wasm_f64x2_extract_lane(nsum, 1);
+    dr = wasm_f64x2_extract_lane(rsum, 0) + wasm_f64x2_extract_lane(rsum, 1);
+    dm = wasm_f64x2_extract_lane(msum, 0) + wasm_f64x2_extract_lane(msum, 1);
+  }
+#endif
+  for (; i < count; i++) {
+    const double ar = res[i] - mean_r;
+    const double am = mask[i] - mean_m;
+    num += ar * am;
+    dr += ar * ar;
+    dm += am * am;
   }
   if (dr < 1e-6 || dm < 1e-6) return 0;
   const double v = num / sqrt(dr * dm);
   return v < 0 ? -v : v;
 }
 
-static int match_shape(const int *grid, int grid_n, const uint8_t *const *masks, int sharpen, int background[3]) {
+static int match_shape(const int *grid, int grid_n, const double *planes, int stride, int sharpen, int background[3]) {
   const int count = grid_n * grid_n;
   background_majority(grid, count, background);
   int bg_rgb[3] = { background[0], background[1], background[2] };
   const double bg_l = lcc_luminance(bg_rgb);
-  double res[256];
+  double res[256] __attribute__((aligned(16)));
   for (int i = 0; i < count; i++) {
     int rgb[3] = { grid[i * 3], grid[i * 3 + 1], grid[i * 3 + 2] };
     res[i] = lcc_luminance(rgb) - bg_l;
@@ -805,14 +832,13 @@ static int match_shape(const int *grid, int grid_n, const uint8_t *const *masks,
   int shape = 0;
   double best = 0;
   for (int s = 1; s < 8; s++) {
-    double score = ncc_at(res, masks[s], grid_n, 0, 0);
+    const double *base = planes + (size_t)(s - 1) * 9 * (size_t)stride;
+    double score = ncc_vec(res, base + 4 * (size_t)stride, count);
     if (score < 0.72) {
-      for (int dy = -1; dy <= 1; dy++) {
-        for (int dx = -1; dx <= 1; dx++) {
-          if (dx == 0 && dy == 0) continue;
-          const double candidate = ncc_at(res, masks[s], grid_n, dx, dy);
-          if (candidate > score) score = candidate;
-        }
+      for (int shift = 0; shift < 9; shift++) {
+        if (shift == 4) continue;
+        const double candidate = ncc_vec(res, base + (size_t)shift * (size_t)stride, count);
+        if (candidate > score) score = candidate;
       }
     }
     if (score > best) {
@@ -978,6 +1004,66 @@ static int parse_payload(const uint8_t *bytes, int len, uint8_t **payload, int *
 
 static const double ECCS[4] = { 0.20, 0.30, 0.35, 0.40 };
 
+static void store_rgb(uint8_t *dst, const int rgb[3]) {
+  dst[0] = (uint8_t)rgb[0];
+  dst[1] = (uint8_t)rgb[1];
+  dst[2] = (uint8_t)rgb[2];
+}
+
+static void warp_module_row(const LccImage *image, const LccFound *found, int module_row, int step, int n_modules, uint8_t *dst) {
+  const int width = n_modules * step;
+  for (int ly = 0; ly < step; ly++) {
+    const double v = module_row + (ly + 0.5) / (double)step;
+    uint8_t *row = dst + (size_t)ly * (size_t)width * 3;
+    if (found->has_h) {
+      const double u0 = 0.5 / (double)step;
+      const double du = 1.0 / (double)step;
+      double numx = found->H[0] * u0 + found->H[1] * v + found->H[2];
+      double numy = found->H[3] * u0 + found->H[4] * v + found->H[5];
+      double den = found->H[6] * u0 + found->H[7] * v + found->H[8];
+      const double dnumx = found->H[0] * du;
+      const double dnumy = found->H[3] * du;
+      const double dden = found->H[6] * du;
+      int px = 0;
+      for (; px + 1 < width; px += 2) {
+        const double den1 = den + dden;
+        int a[3] = { 255, 255, 255 };
+        int b[3] = { 255, 255, 255 };
+        if (fabs(den) >= 1e-12 && fabs(den1) >= 1e-12) {
+          lcc_sample_bilinear2(image, numx / den, numy / den, (numx + dnumx) / den1, (numy + dnumy) / den1, a, b);
+        }
+        store_rgb(row + (size_t)px * 3, a);
+        store_rgb(row + (size_t)(px + 1) * 3, b);
+        numx += dnumx * 2;
+        numy += dnumy * 2;
+        den += dden * 2;
+      }
+      if (px < width) {
+        int a[3] = { 255, 255, 255 };
+        if (fabs(den) >= 1e-12) lcc_sample_bilinear(image, numx / den, numy / den, a);
+        store_rgb(row + (size_t)px * 3, a);
+      }
+    } else {
+      const double du = found->s / (double)step;
+      double x = found->origin_x + (0.5 / (double)step) * found->s;
+      const double y = found->origin_y + v * found->s;
+      int px = 0;
+      for (; px + 1 < width; px += 2) {
+        int a[3], b[3];
+        lcc_sample_bilinear2(image, x, y, x + du, y, a, b);
+        store_rgb(row + (size_t)px * 3, a);
+        store_rgb(row + (size_t)(px + 1) * 3, b);
+        x += du * 2;
+      }
+      if (px < width) {
+        int a[3];
+        lcc_sample_bilinear(image, x, y, a);
+        store_rgb(row + (size_t)px * 3, a);
+      }
+    }
+  }
+}
+
 static int decode_found(
   const LccImage *image,
   const LccVariant *variant,
@@ -1035,9 +1121,60 @@ static int decode_found(
     }
     grid = lcc_alloc((size_t)grid_n * grid_n * 3 * sizeof(int));
   }
+  int step = 0;
+  int plane_stride = 0;
+  double *planes = NULL;
+  uint8_t *band = NULL;
+  int *order = NULL;
+  if (patterns) {
+    const int count = grid_n * grid_n;
+    plane_stride = (count + 1) & ~1;
+    step = grid_n * 2;
+    planes = lcc_alloc((size_t)7 * 9 * (size_t)plane_stride * sizeof(double));
+    band = lcc_alloc((size_t)step * (size_t)layout.N * (size_t)step * 3);
+    order = lcc_alloc((size_t)D * sizeof(int));
+    if (!grid || !planes || !band || !order) {
+      for (int s = 1; s < 8; s++) lcc_release(masks[s]);
+      lcc_release(grid);
+      lcc_release(planes);
+      lcc_release(band);
+      lcc_release(order);
+      lcc_release(symbols);
+      lcc_layout_free(&layout);
+      return LCC_ERR;
+    }
+    for (int s = 1; s < 8; s++) {
+      for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+          double *dst = planes + (((size_t)(s - 1) * 9 + (size_t)((dy + 1) * 3 + (dx + 1))) * (size_t)plane_stride);
+          for (int y = 0; y < grid_n; y++) {
+            for (int x = 0; x < grid_n; x++) {
+              const int tx = x + dx;
+              const int ty = y + dy;
+              const double m = tx >= 0 && ty >= 0 && tx < grid_n && ty < grid_n ? masks[s][ty * grid_n + tx] : 0;
+              dst[y * grid_n + x] = m;
+            }
+          }
+        }
+      }
+    }
+    for (int i = 0; i < D; i++) order[i] = i;
+    for (int a = 1; a < D; a++) {
+      const int key = order[a];
+      const int key_row = layout.data_rc[key * 2];
+      int b = a;
+      while (b > 0 && layout.data_rc[order[b - 1] * 2] > key_row) {
+        order[b] = order[b - 1];
+        b--;
+      }
+      order[b] = key;
+    }
+  }
   const int sharpen = found->s > 0 && found->s < 12;
-  const double taps[2] = { 0.25, 0.75 };
-  for (int i = 0; i < D; i++) {
+  const int band_w = patterns ? layout.N * step : 0;
+  int loaded_row = -1;
+  for (int k = 0; k < D; k++) {
+    const int i = patterns ? order[k] : k;
     const int row = layout.data_rc[i * 2];
     const int col = layout.data_rc[i * 2 + 1];
     if (!patterns) {
@@ -1047,21 +1184,20 @@ static int decode_found(
       symbols[i] = classify_color(&cal, palette, rgb, found->threshold);
       continue;
     }
+    if (row != loaded_row) {
+      warp_module_row(image, found, row, step, layout.N, band);
+      loaded_row = row;
+    }
     for (int gy = 0; gy < grid_n; gy++) {
       for (int gx = 0; gx < grid_n; gx++) {
         int acc[3] = { 0, 0, 0 };
         for (int tv = 0; tv < 2; tv++) {
           for (int tu = 0; tu < 2; tu++) {
-            const double u = (gx + taps[tu]) / grid_n;
-            const double v = (gy + taps[tv]) / grid_n;
-            double x, y;
-            if (found->has_h) apply_h(found->H, col + u, row + v, &x, &y);
-            else {
-              x = found->origin_x + (col + u) * found->s;
-              y = found->origin_y + (row + v) * found->s;
-            }
-            int raw[3], rgb[3];
-            lcc_sample_bilinear(image, x, y, raw);
+            const int px = col * step + gx * 2 + tu;
+            const int py = gy * 2 + tv;
+            const uint8_t *sample = band + ((size_t)py * (size_t)band_w + (size_t)px) * 3;
+            int raw[3] = { sample[0], sample[1], sample[2] };
+            int rgb[3];
             normalize_rgb(&illum, raw, row, col, rgb);
             acc[0] += rgb[0];
             acc[1] += rgb[1];
@@ -1075,7 +1211,7 @@ static int decode_found(
       }
     }
     int majority[3];
-    const int shape = match_shape(grid, grid_n, (const uint8_t *const *)masks, sharpen, majority);
+    const int shape = match_shape(grid, grid_n, planes, plane_stride, sharpen, majority);
     int background[3];
     if (shape == 0) {
       background[0] = majority[0];
@@ -1089,6 +1225,9 @@ static int decode_found(
   }
   for (int s = 1; s < 8; s++) lcc_release(masks[s]);
   lcc_release(grid);
+  lcc_release(planes);
+  lcc_release(band);
+  lcc_release(order);
 
   BitWriter writer = { 0 };
   const int bits_per = palette->bits;
@@ -1206,7 +1345,7 @@ int lcc_decode_image(const LccImage *image, int mode, uint8_t **payload, int *pa
   return saw_constraint ? LCC_UNSUPPORTED : LCC_ERR;
 }
 
-static int detect_camera_frame(const LccImage *image, LccFound *found) {
+static int detect_camera_frame(const LccImage *image, LccFound *found, int *variant_index) {
   int factor = 1;
   while (image->width / factor > 960 || image->height / factor > 960) factor++;
   uint8_t *scaled = NULL;
@@ -1217,24 +1356,7 @@ static int detect_camera_frame(const LccImage *image, LccFound *found) {
     if (w < 32 || h < 32) return 0;
     scaled = lcc_alloc((size_t)w * (size_t)h * 3);
     if (!scaled) return 0;
-    const int area = factor * factor;
-    for (int y = 0; y < h; y++) {
-      for (int x = 0; x < w; x++) {
-        int acc[3] = { 0, 0, 0 };
-        for (int dy = 0; dy < factor; dy++) {
-          for (int dx = 0; dx < factor; dx++) {
-            const int p = ((y * factor + dy) * image->width + (x * factor + dx)) * 3;
-            acc[0] += image->data[p];
-            acc[1] += image->data[p + 1];
-            acc[2] += image->data[p + 2];
-          }
-        }
-        const int o = (y * w + x) * 3;
-        scaled[o] = (uint8_t)(acc[0] / area);
-        scaled[o + 1] = (uint8_t)(acc[1] / area);
-        scaled[o + 2] = (uint8_t)(acc[2] / area);
-      }
-    }
+    lcc_downscale_box(image->data, image->width, image->height, factor, scaled);
     view.width = w;
     view.height = h;
     view.data = scaled;
@@ -1245,12 +1367,16 @@ static int detect_camera_frame(const LccImage *image, LccFound *found) {
     return 0;
   }
   int ok = 0;
+  if (variant_index) *variant_index = -1;
   for (size_t i = 0; i < sizeof(PERSP_NAMES) / sizeof(PERSP_NAMES[0]); i++) {
     LccVariant variant;
     if (!lcc_variant_build(&prep, PERSP_NAMES[i], &variant)) continue;
     ok = lcc_detect_perspective(&view, &variant, found);
     lcc_variant_free(&variant);
-    if (ok) break;
+    if (ok) {
+      if (variant_index) *variant_index = (int)i;
+      break;
+    }
   }
   lcc_prep_free(&prep);
   if (ok && factor > 1) {
@@ -1267,6 +1393,34 @@ static int detect_camera_frame(const LccImage *image, LccFound *found) {
   return ok;
 }
 
+static int decode_known(const LccImage *image, const LccFound *found, const char *name, uint8_t **payload, int *payload_len, LccDecodeMeta *meta) {
+  LccPrep prep;
+  if (!lcc_prep_init(&prep, image)) return LCC_ERR;
+  LccVariant variant;
+  if (!lcc_variant_build(&prep, name, &variant)) {
+    lcc_prep_free(&prep);
+    return LCC_ERR;
+  }
+  LccFound local = *found;
+  local.threshold = lcc_threshold_at(&variant, image->width / 2.0, image->height / 2.0);
+  const int status = decode_found(image, &variant, &local, payload, payload_len, meta);
+  lcc_variant_free(&variant);
+  lcc_prep_free(&prep);
+  return status;
+}
+
+static void found_from_det(const LccDet *det, LccFound *found) {
+  memset(found, 0, sizeof(*found));
+  found->version = det->version;
+  found->N = det->N;
+  found->s = det->s;
+  found->score = det->score;
+  found->has_h = det->has_h;
+  memcpy(found->H, det->H, sizeof(found->H));
+  found->origin_x = det->origin_x;
+  found->origin_y = det->origin_y;
+}
+
 int lcc_scan_frames(
   const LccImage *frames,
   int count,
@@ -1276,13 +1430,19 @@ int lcc_scan_frames(
 ) {
   if (!frames || count <= 0 || count > 8) return LCC_BAD_INPUT;
   LccDet *dets = lcc_alloc((size_t)count * sizeof(LccDet));
-  if (!dets) return LCC_ERR;
+  int *variants = lcc_alloc((size_t)count * sizeof(int));
+  if (!dets || !variants) {
+    lcc_release(dets);
+    lcc_release(variants);
+    return LCC_ERR;
+  }
   memset(dets, 0, (size_t)count * sizeof(LccDet));
   int any = 0;
   for (int i = 0; i < count; i++) {
     LccFound found;
     memset(&found, 0, sizeof(found));
-    if (!frames[i].data || !detect_camera_frame(&frames[i], &found)) continue;
+    variants[i] = -1;
+    if (!frames[i].data || !detect_camera_frame(&frames[i], &found, &variants[i])) continue;
     dets[i].valid = 1;
     dets[i].version = found.version;
     dets[i].N = found.N;
@@ -1296,23 +1456,43 @@ int lcc_scan_frames(
   }
   if (!any) {
     lcc_release(dets);
+    lcc_release(variants);
     return LCC_ERR;
   }
   uint8_t *rgb = NULL;
-  int width = 0, height = 0, used = 0, stacked = 0, version = 0, N = 0, module = 0, quiet = 0;
+  int width = 0, height = 0, used = 0, stacked = 0, version = 0, N = 0, module = 0, quiet = 0, source = -1;
   double noise = 0;
   const int stack_status = lcc_stack_frames(
     frames, dets, count, 4, 0, 1400, 257,
-    &rgb, &width, &height, &used, &stacked, &noise, &version, &N, &module, &quiet
+    &rgb, &width, &height, &used, &stacked, &noise, &version, &N, &module, &quiet, &source
   );
-  lcc_release(dets);
-  if (stack_status != LCC_OK || !rgb) {
+  if (stack_status != LCC_OK || !rgb || source < 0 || source >= count) {
     lcc_release(rgb);
+    lcc_release(dets);
+    lcc_release(variants);
     return stack_status == LCC_OK ? LCC_ERR : stack_status;
   }
-  LccImage image = { width, height, rgb };
-  const int mode = stacked ? 1 : 2;
-  const int status = lcc_decode_image(&image, mode, payload, payload_len, meta);
+  int status;
+  if (!stacked) {
+    LccFound found;
+    found_from_det(&dets[source], &found);
+    const int variant = variants[source];
+    const char *name = variant >= 0 ? PERSP_NAMES[variant] : PERSP_NAMES[0];
+    status = decode_known(&frames[source], &found, name, payload, payload_len, meta);
+  } else {
+    LccFound axis;
+    memset(&axis, 0, sizeof(axis));
+    axis.version = version;
+    axis.N = N;
+    axis.s = module;
+    axis.origin_x = quiet * module - 0.5;
+    axis.origin_y = quiet * module - 0.5;
+    axis.axis = 1;
+    LccImage image = { width, height, rgb };
+    status = decode_known(&image, &axis, AXIS_NAMES[0], payload, payload_len, meta);
+  }
   lcc_release(rgb);
+  lcc_release(dets);
+  lcc_release(variants);
   return status;
 }

@@ -96,6 +96,8 @@ const LccPaletteInfo *lcc_palette(const char *name, int harmony);
 double lcc_js_round(double x);
 void lcc_sample_image(const LccImage *image, double x, double y, int radius, int rgb[3]);
 void lcc_sample_bilinear(const LccImage *image, double x, double y, int rgb[3]);
+void lcc_sample_bilinear2(const LccImage *image, double x0, double y0, double x1, double y1, int rgb0[3], int rgb1[3]);
+void lcc_downscale_box(const uint8_t *src, int sw, int sh, int factor, uint8_t *dst);
 
 int lcc_stack_frames(
   const LccImage *frames,
@@ -114,7 +116,8 @@ int lcc_stack_frames(
   int *out_version,
   int *out_N,
   int *out_module,
-  int *out_quiet);
+  int *out_quiet,
+  int *out_source);
 
 int lcc_decode_image(const LccImage *image, int mode, uint8_t **payload, int *payload_len, LccDecodeMeta *meta);
 int lcc_scan_frames(const LccImage *frames, int count, uint8_t **payload, int *payload_len, LccDecodeMeta *meta);

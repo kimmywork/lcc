@@ -2,24 +2,24 @@
 
 ## Focus
 
-C 扫描路径：模板匹配解码，以及多帧侦测、合成、解码。
+扫描只解码一次，整数网格采样，以及 wasm SIMD。
 
 ## Status
 
-网页拍照和连续扫描优先走 `lcc_api_scan`。干净 L3s 约 26–40 ms。1600 像素实拍里，原本能解的那张约 356 ms。难样本仍过不了 RS。
+`npm test` 21 项通过。干净 L3s 扫描约 30 ms。1600 像素实拍里，能解开的约 216 ms，解不开的约 100–165 ms。难样本仍是笔画被收成空白。
 
 ## Recent
 
-- C 形状分类改为归一化相关，白平衡与 JS 对齐。
-- 多帧侦测在 C 内完成，长边超过 960 先缩小。
-- `npm test` 21 项通过。
+- 扫描复用已有单应性，不再把每种二值化都解码一遍。
+- 形状采样改为按模块行的整数网格。
+- 相关、采样和 2 倍缩小使用 wasm SIMD，wasm 由 emcc 编出。
 
 ## Next
 
-难样本的笔画错误仍然超过分块 RS。constraint 仍由 JS 解码。
+难样本的笔画错误仍然超过分块 RS。网页多帧成功时的帧数显示还没有用上 C 扫描的实际合成结果。
 
 ## References
 
 - `.agents/worklog/2026-11-11.md`
-- `native/lcc_decode.c` `match_shape`、`lcc_scan_frames`
-- `docs/lib/lcc-wasm.js` `scanFramesWasm`
+- `docs/research/wechat-qr-models-and-wasm-speed.md`
+- `native/lcc_decode.c` `decode_known`、`warp_module_row`
