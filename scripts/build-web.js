@@ -10,6 +10,12 @@ const root = path.resolve('.');
 const src = path.join(root, 'src');
 const out = path.join(root, 'docs', 'lib');
 const skip = new Set(['png.js', 'node-io.js', 'cli.js']);
+const keepNames = ['lcc.wasm', 'lcc-wasm.js'];
+const kept = new Map();
+for (const name of keepNames) {
+  const file = path.join(out, name);
+  if (fs.existsSync(file)) kept.set(name, fs.readFileSync(file));
+}
 
 fs.rmSync(out, { recursive: true, force: true });
 
@@ -25,6 +31,9 @@ function copyDir(from, to) {
 }
 
 copyDir(src, out);
+for (const [name, bytes] of kept) {
+  fs.writeFileSync(path.join(out, name), bytes);
+}
 
 const exOut = path.join(root, 'docs', 'examples');
 fs.mkdirSync(exOut, { recursive: true });

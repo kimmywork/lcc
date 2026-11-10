@@ -5,6 +5,8 @@ import { BitReader, BitWriter } from '../src/bitstream.js';
 import { deltaE76, rgbToLab } from '../src/color.js';
 import { RankConstraint } from '../src/constraint.js';
 import { decodeAuto, detectSymbol } from '../src/decoder.js';
+import { buildIlluminationModel } from '../src/illumination.js';
+import { makeLayout } from '../src/layout.js';
 import { bch15Decode, bch15Encode } from '../src/ecc/bch15.js';
 import { rsDecode, rsEncode } from '../src/ecc/rs.js';
 import { encode } from '../src/encoder.js';
@@ -269,6 +271,65 @@ test('multi-frame stacking decodes a noisy burst', () => {
   assert.ok(stacked.frames >= 2);
   const decoded = decodeAuto(stacked.image);
   assert.equal(decoded.text, text);
+});
+
+function applyChannelCast(image, gain, bias = [0, 0, 0]) {
+  const data = new Uint8Array(image.data.length);
+  for (let i = 0; i < data.length; i += 3) {
+    for (let c = 0; c < 3; c++) {
+      const v = image.data[i + c] * gain[c] + bias[c];
+      data[i + c] = Math.max(0, Math.min(255, Math.round(v)));
+    }
+  }
+  return { width: image.width, height: image.height, data };
+}
+
+test('locator white balance corrects neutral colour cast', () => {
+  const text = 'cast';
+  const casts = {
+    warm: [[1, 0.82, 0.62], [0, 0, 0]],
+    cool: [[0.62, 0.82, 1], [0, 0, 0]],
+    red: [[0.55, 1, 1], [8, 0, 0]],
+  };
+  for (const layer of ['L3c', 'L3s']) {
+    const result = encode(text, {
+      layer,
+      version: 2,
+      moduleSize: 24,
+      width: 1024,
+      height: 1024,
+      mode: 'fill',
+      maxModulePx: 32,
+      constraint: false,
+    });
+    const clean = decodeAuto(result.image);
+    assert.equal(clean.text, text, `${layer} clean`);
+    const det = detectSymbol(result.image);
+    const pointAt = (row, col) => [
+      det.originX + (col + 0.5) * det.s,
+      det.originY + (row + 0.5) * det.s,
+    ];
+    const layout = makeLayout({ version: det.version, layer: 'L1' });
+    const neutral = buildIlluminationModel({ layout, image: result.image, pointAt });
+    assert.equal(neutral.chromatic, false, `${layer} clean locators stay neutral`);
+
+    for (const [name, [gain, bias]] of Object.entries(casts)) {
+      const cast = applyChannelCast(result.image, gain, bias);
+      const castDet = detectSymbol(cast);
+      const castPoint = (row, col) => [
+        castDet.originX + (col + 0.5) * castDet.s,
+        castDet.originY + (row + 0.5) * castDet.s,
+      ];
+      const model = buildIlluminationModel({
+        layout: makeLayout({ version: castDet.version, layer: 'L1' }),
+        image: cast,
+        pointAt: castPoint,
+      });
+      assert.equal(model.chromatic, true, `${layer} ${name} enables per-channel correction`);
+      const decoded = decodeAuto(cast);
+      assert.equal(decoded.text, text, `${layer} ${name} cast`);
+    }
+  }
 });
 
 test('SVG renders shape strokes', () => {

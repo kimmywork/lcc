@@ -1,0 +1,48 @@
+#!/bin/sh
+# Build the C scan core to docs/lib/lcc.wasm.
+# Uses Emscripten when emcc is available, otherwise zig's wasm32-wasi target.
+# Both produce the same exported C functions and a small WASI import surface.
+set -e
+ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+cd "$ROOT"
+node scripts/gen-palette-tables.js
+
+SOURCES="
+  native/lcc_util.c
+  native/lcc_color.c
+  native/lcc_ecc.c
+  native/lcc_stack.c
+  native/lcc_layout.c
+  native/lcc_preprocess.c
+  native/lcc_detect.c
+  native/lcc_decode.c
+  native/lcc_api.c
+  native/palette_tables.c
+"
+
+if command -v emcc >/dev/null 2>&1 || [ -x "$HOME/emsdk/upstream/emscripten/emcc" ]; then
+  if [ -f "$HOME/emsdk/emsdk_env.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$HOME/emsdk/emsdk_env.sh"
+  fi
+  # shellcheck disable=SC2086
+  emcc $SOURCES \
+    -O3 \
+    -Inative \
+    -s STANDALONE_WASM=1 \
+    -s EXPORTED_FUNCTIONS='["_lcc_api_stack","_lcc_api_decode","_lcc_last","_lcc_last_len","_malloc","_free"]' \
+    -o docs/lib/lcc.wasm
+else
+  export ZIG_GLOBAL_CACHE_DIR="${ZIG_GLOBAL_CACHE_DIR:-$ROOT/.zig-cache}"
+  export ZIG_LOCAL_CACHE_DIR="${ZIG_LOCAL_CACHE_DIR:-$ROOT/.zig-cache}"
+  # shellcheck disable=SC2086
+  zig cc -target wasm32-wasi -O3 -Inative $SOURCES \
+    -o docs/lib/lcc.wasm \
+    -Wl,--no-entry \
+    -Wl,--export=lcc_api_stack \
+    -Wl,--export=lcc_api_decode \
+    -Wl,--export=lcc_last \
+    -Wl,--export=lcc_last_len \
+    -Wl,--export=malloc \
+    -Wl,--export=free
+fi

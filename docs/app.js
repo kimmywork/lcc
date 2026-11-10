@@ -5,6 +5,7 @@ import {
   renderSVG,
   stackCanonicalFrames,
 } from './lib/index.js';
+import { decodeAutoWasm, stackCanonicalFramesWasm } from './lib/lcc-wasm.js';
 
 const $ = (id) => document.getElementById(id);
 const textEl = $('text');
@@ -258,7 +259,11 @@ async function captureStack(count, onProgress) {
     if (i < count - 1) await new Promise((resolve) => setTimeout(resolve, 90));
   }
   try {
-    return stackCanonicalFrames(frames, detections, { quietZone: 4 });
+    try {
+      return await stackCanonicalFramesWasm(frames, detections, { quietZone: 4 });
+    } catch {
+      return stackCanonicalFrames(frames, detections, { quietZone: 4 });
+    }
   } catch {
     return {
       image: frames[frames.length - 1],
@@ -275,7 +280,15 @@ async function decodeRGB(image, options = {}) {
   if (!options.silent) setStatus('解码中…', 'busy');
   await new Promise((resolve) => setTimeout(resolve, 20));
   try {
-    const result = decodeAuto(image, options.detector ? { detector: options.detector } : {});
+    let result = null;
+    try {
+      result = await decodeAutoWasm(image, options.detector ? { detector: options.detector } : {});
+    } catch {
+      result = null;
+    }
+    if (!result) {
+      result = decodeAuto(image, options.detector ? { detector: options.detector } : {});
+    }
     if (options.stackInfo) {
       result.meta.stackFrames = options.stackInfo.frames;
       result.meta.stackRequested = options.stackInfo.requested;
