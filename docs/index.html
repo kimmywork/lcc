@@ -180,7 +180,10 @@
 
       <div class="camera-wrap">
         <video id="video" autoplay playsinline webkit-playsinline muted></video>
-        <div id="cameraHint" class="camera-hint">点击打开摄像头</div>
+        <div id="cameraHint" class="camera-hint">点击打开摄像头（需 HTTPS）</div>
+      </div>
+      <div class="hint">
+        手机通过 <code>http://192.168.x.x</code> 打开时，Safari/Chrome 会禁用摄像头；请用 HTTPS（GitHub Pages、Cloudflare Tunnel、ngrok）或电脑 localhost。
       </div>
 
       <div class="actions">

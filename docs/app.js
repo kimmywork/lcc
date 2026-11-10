@@ -430,10 +430,13 @@ async function startCamera() {
   setStatus('正在请求摄像头…', 'busy');
   try {
     if (!window.isSecureContext) {
-      throw new Error('摄像头需要 HTTPS 或 localhost；请通过 HTTPS 打开页面。');
+      throw new Error(
+        '当前地址不是 HTTPS/localhost（例如 http://192.168.x.x），Safari/Chrome 会禁用摄像头。' +
+        '请用 HTTPS 隧道、GitHub Pages 或 localhost 打开。',
+      );
     }
     if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error('当前浏览器不支持摄像头 API；请使用最新版 Safari/Chrome。');
+      throw new Error('当前浏览器不支持摄像头 API；请使用 iOS 14.3+ 的 Safari 或最新版 Chrome。');
     }
     cameraStream = await getCameraStream();
     video.srcObject = cameraStream;
@@ -458,7 +461,13 @@ async function startCamera() {
     video.srcObject = null;
     $('cameraHint').style.display = '';
     startButton.disabled = false;
-    setStatus(`无法打开摄像头：${cameraErrorMessage(e)}`, 'err');
+    const diagnostic = [
+      `secure=${window.isSecureContext}`,
+      `protocol=${location.protocol}`,
+      `mediaDevices=${!!navigator.mediaDevices}`,
+      `error=${e?.name ?? 'Error'}`,
+    ].join(' · ');
+    setStatus(`无法打开摄像头：${cameraErrorMessage(e)}（${diagnostic}）`, 'err');
   }
 }
 
