@@ -190,6 +190,7 @@ static const char *layer_name_of(const FormatInfo *fmt) {
 
 typedef struct {
   int chromatic;
+  int per_channel;
   int nfit;
   double black[4];
   double white[4];
@@ -234,6 +235,38 @@ static double eval_field(const double model[4], int ncoef, double row, double co
   return model[0] + model[1] * row + model[2] * col;
 }
 
+static void sort_ints(int *v, int n) {
+  for (int i = 1; i < n; i++) {
+    const int key = v[i];
+    int j = i - 1;
+    while (j >= 0 && v[j] > key) {
+      v[j + 1] = v[j];
+      j--;
+    }
+    v[j + 1] = key;
+  }
+}
+
+static void sample_inset(const LccImage *image, const LccFound *found, double row, double col, int rgb[3]) {
+  int samples[9][3];
+  const double off[3] = { -0.2, 0.0, 0.2 };
+  int n = 0;
+  for (int iy = 0; iy < 3; iy++) {
+    for (int ix = 0; ix < 3; ix++) {
+      double x, y;
+      point_at(found, row + off[iy], col + off[ix], &x, &y);
+      lcc_sample_bilinear(image, x, y, samples[n]);
+      n++;
+    }
+  }
+  for (int c = 0; c < 3; c++) {
+    int vals[9];
+    for (int i = 0; i < 9; i++) vals[i] = samples[i][c];
+    sort_ints(vals, 9);
+    rgb[c] = vals[4];
+  }
+}
+
 static void build_illum(const LccImage *image, const LccFound *found, const LccLayout *layout, Illum *illum) {
   memset(illum, 0, sizeof(*illum));
   const int N = layout->N;
@@ -270,19 +303,15 @@ static void build_illum(const LccImage *image, const LccFound *found, const LccL
     }
     double br = 0, bg = 0, bb = 0, wr = 0, wg = 0, wb = 0;
     for (int k = 0; k < nb; k++) {
-      double x, y;
-      point_at(found, black_rc[k][0], black_rc[k][1], &x, &y);
       int rgb[3];
-      lcc_sample_image(image, x, y, 1, rgb);
+      sample_inset(image, found, black_rc[k][0], black_rc[k][1], rgb);
       br += rgb[0];
       bg += rgb[1];
       bb += rgb[2];
     }
     for (int k = 0; k < nw; k++) {
-      double x, y;
-      point_at(found, white_rc[k][0], white_rc[k][1], &x, &y);
       int rgb[3];
-      lcc_sample_image(image, x, y, 1, rgb);
+      sample_inset(image, found, white_rc[k][0], white_rc[k][1], rgb);
       wr += rgb[0];
       wg += rgb[1];
       wb += rgb[2];
@@ -320,16 +349,17 @@ static void build_illum(const LccImage *image, const LccFound *found, const LccL
   int ncoef_w = 0;
   if (!fit_field(rows, cols, white, n, illum->white, &ncoef_w)) ncoef_w = 0;
   illum->nfit = ncoef < ncoef_w ? ncoef : ncoef_w;
-  int chromatic = spread > 12;
-  if (chromatic) {
-    int ok = 1;
-    for (int ch = 0; ch < 3; ch++) {
-      int nb = 0, nw = 0;
-      if (!fit_field(rows, cols, black_ch[ch], n, illum->black_ch[ch], &nb)) ok = 0;
-      if (!fit_field(rows, cols, white_ch[ch], n, illum->white_ch[ch], &nw)) ok = 0;
-    }
-    illum->chromatic = ok;
+  int ok = 1;
+  int channel_fit = 0;
+  for (int ch = 0; ch < 3; ch++) {
+    int nb = 0, nw = 0;
+    if (!fit_field(rows, cols, black_ch[ch], n, illum->black_ch[ch], &nb)) ok = 0;
+    if (!fit_field(rows, cols, white_ch[ch], n, illum->white_ch[ch], &nw)) ok = 0;
+    if (ch == 0) channel_fit = nb < nw ? nb : nw;
   }
+  illum->per_channel = ok && channel_fit >= 3;
+  if (illum->per_channel) illum->nfit = channel_fit;
+  illum->chromatic = spread > 12 && illum->per_channel;
 }
 
 static int clamp_byte(int v) {
@@ -339,7 +369,7 @@ static int clamp_byte(int v) {
 }
 
 static void normalize_rgb(const Illum *illum, const int rgb[3], int row, int col, int out[3]) {
-  if (!illum->chromatic || illum->nfit < 3) {
+  if (!illum->per_channel || illum->nfit < 3) {
     const double b = illum->nfit >= 3 ? eval_field(illum->black, illum->nfit, row, col) : 0;
     const double w = illum->nfit >= 3 ? eval_field(illum->white, illum->nfit, row, col) : 255;
     const double range = (w - b) > 20 ? (w - b) : 20;
@@ -678,6 +708,122 @@ static void refine_background(const int *grid, int shape, int grid_n, int line, 
   lcc_release(idx);
 }
 
+static void background_majority(const int *grid, int count, int out[3]) {
+  double levels[256];
+  int bins[32];
+  memset(bins, 0, sizeof(bins));
+  for (int i = 0; i < count; i++) {
+    int rgb[3] = { grid[i * 3], grid[i * 3 + 1], grid[i * 3 + 2] };
+    levels[i] = lcc_luminance(rgb);
+    int bin = (int)(levels[i] / 8.0);
+    if (bin < 0) bin = 0;
+    if (bin > 31) bin = 31;
+    bins[bin]++;
+  }
+  int mode = 0;
+  for (int i = 1; i < 32; i++) if (bins[i] > bins[mode]) mode = i;
+  const double center = mode * 8 + 4;
+  int idx[256];
+  int nidx = 0;
+  for (int i = 0; i < count; i++) {
+    double d = levels[i] - center;
+    if (d < 0) d = -d;
+    if (d <= 14) idx[nidx++] = i;
+  }
+  int all[256];
+  for (int i = 0; i < count; i++) all[i] = i;
+  if (nidx < count * 0.25) median_rgb(grid, all, count, out);
+  else median_rgb(grid, idx, nidx, out);
+}
+
+static void sharpen_residual(double *res, int n) {
+  double blurred[256];
+  for (int y = 0; y < n; y++) {
+    for (int x = 0; x < n; x++) {
+      double sum = 0;
+      int count = 0;
+      for (int dy = -1; dy <= 1; dy++) {
+        const int yy = y + dy;
+        if (yy < 0 || yy >= n) continue;
+        for (int dx = -1; dx <= 1; dx++) {
+          const int xx = x + dx;
+          if (xx < 0 || xx >= n) continue;
+          sum += res[yy * n + xx];
+          count++;
+        }
+      }
+      blurred[y * n + x] = sum / count;
+    }
+  }
+  for (int i = 0; i < n * n; i++) res[i] += 0.8 * (res[i] - blurred[i]);
+}
+
+static double ncc_at(const double *res, const uint8_t *mask, int n, int dx, int dy) {
+  const int N = n * n;
+  double sum_r = 0;
+  double sum_m = 0;
+  for (int y = 0; y < n; y++) {
+    for (int x = 0; x < n; x++) {
+      const int tx = x + dx;
+      const int ty = y + dy;
+      const double m = tx >= 0 && ty >= 0 && tx < n && ty < n ? mask[ty * n + tx] : 0;
+      sum_r += res[y * n + x];
+      sum_m += m;
+    }
+  }
+  const double mean_r = sum_r / N;
+  const double mean_m = sum_m / N;
+  double num = 0, dr = 0, dm = 0;
+  for (int y = 0; y < n; y++) {
+    for (int x = 0; x < n; x++) {
+      const int tx = x + dx;
+      const int ty = y + dy;
+      const double m = tx >= 0 && ty >= 0 && tx < n && ty < n ? mask[ty * n + tx] : 0;
+      const double ar = res[y * n + x] - mean_r;
+      const double am = m - mean_m;
+      num += ar * am;
+      dr += ar * ar;
+      dm += am * am;
+    }
+  }
+  if (dr < 1e-6 || dm < 1e-6) return 0;
+  const double v = num / sqrt(dr * dm);
+  return v < 0 ? -v : v;
+}
+
+static int match_shape(const int *grid, int grid_n, const uint8_t *const *masks, int sharpen, int background[3]) {
+  const int count = grid_n * grid_n;
+  background_majority(grid, count, background);
+  int bg_rgb[3] = { background[0], background[1], background[2] };
+  const double bg_l = lcc_luminance(bg_rgb);
+  double res[256];
+  for (int i = 0; i < count; i++) {
+    int rgb[3] = { grid[i * 3], grid[i * 3 + 1], grid[i * 3 + 2] };
+    res[i] = lcc_luminance(rgb) - bg_l;
+  }
+  if (sharpen) sharpen_residual(res, grid_n);
+  int shape = 0;
+  double best = 0;
+  for (int s = 1; s < 8; s++) {
+    double score = ncc_at(res, masks[s], grid_n, 0, 0);
+    if (score < 0.72) {
+      for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+          if (dx == 0 && dy == 0) continue;
+          const double candidate = ncc_at(res, masks[s], grid_n, dx, dy);
+          if (candidate > score) score = candidate;
+        }
+      }
+    }
+    if (score > best) {
+      best = score;
+      shape = s;
+    }
+  }
+  if (best < 0.32) shape = 0;
+  return shape;
+}
+
 static int cluster_shape(const int *grid, int n, uint8_t *foreground) {
   memset(foreground, 0, (size_t)n);
   if (n <= 0) return 0;
@@ -871,6 +1017,8 @@ static int decode_found(
   int grid_n = 0;
   int line = 0;
   int inset = 0;
+  uint8_t *masks[8] = { 0 };
+  int *grid = NULL;
   if (patterns) {
     grid_n = (int)lcc_js_round(found->s > 0 ? found->s : 12);
     if (grid_n < 8) grid_n = 8;
@@ -881,7 +1029,14 @@ static int decode_found(
     inset = (int)lcc_js_round((double)(inset_px < 1 ? 1 : inset_px) * grid_n / found->s);
     if (line < 1) line = 1;
     if (inset < 1) inset = 1;
+    for (int s = 1; s < 8; s++) {
+      masks[s] = lcc_alloc((size_t)grid_n * grid_n);
+      shape_mask(s, grid_n, line, inset, masks[s]);
+    }
+    grid = lcc_alloc((size_t)grid_n * grid_n * 3 * sizeof(int));
   }
+  const int sharpen = found->s > 0 && found->s < 12;
+  const double taps[2] = { 0.25, 0.75 };
   for (int i = 0; i < D; i++) {
     const int row = layout.data_rc[i * 2];
     const int col = layout.data_rc[i * 2 + 1];
@@ -892,36 +1047,48 @@ static int decode_found(
       symbols[i] = classify_color(&cal, palette, rgb, found->threshold);
       continue;
     }
-    int *grid = lcc_alloc((size_t)grid_n * grid_n * 3 * sizeof(int));
     for (int gy = 0; gy < grid_n; gy++) {
       for (int gx = 0; gx < grid_n; gx++) {
-        const double u = (gx + 0.5) / grid_n;
-        const double v = (gy + 0.5) / grid_n;
-        double x, y;
-        if (found->has_h) apply_h(found->H, col + u, row + v, &x, &y);
-        else {
-          x = found->origin_x + (col + u) * found->s;
-          y = found->origin_y + (row + v) * found->s;
+        int acc[3] = { 0, 0, 0 };
+        for (int tv = 0; tv < 2; tv++) {
+          for (int tu = 0; tu < 2; tu++) {
+            const double u = (gx + taps[tu]) / grid_n;
+            const double v = (gy + taps[tv]) / grid_n;
+            double x, y;
+            if (found->has_h) apply_h(found->H, col + u, row + v, &x, &y);
+            else {
+              x = found->origin_x + (col + u) * found->s;
+              y = found->origin_y + (row + v) * found->s;
+            }
+            int raw[3], rgb[3];
+            lcc_sample_bilinear(image, x, y, raw);
+            normalize_rgb(&illum, raw, row, col, rgb);
+            acc[0] += rgb[0];
+            acc[1] += rgb[1];
+            acc[2] += rgb[2];
+          }
         }
-        int raw[3], rgb[3];
-        lcc_sample_bilinear(image, x, y, raw);
-        normalize_rgb(&illum, raw, row, col, rgb);
         const int p = (gy * grid_n + gx) * 3;
-        grid[p] = rgb[0];
-        grid[p + 1] = rgb[1];
-        grid[p + 2] = rgb[2];
+        grid[p] = acc[0] / 4;
+        grid[p + 1] = acc[1] / 4;
+        grid[p + 2] = acc[2] / 4;
       }
     }
-    uint8_t *fg = lcc_alloc((size_t)grid_n * grid_n);
-    cluster_shape(grid, grid_n * grid_n, fg);
-    const int shape = classify_shape(fg, grid_n, line, inset);
+    int majority[3];
+    const int shape = match_shape(grid, grid_n, (const uint8_t *const *)masks, sharpen, majority);
     int background[3];
-    refine_background(grid, shape, grid_n, line, inset, background);
+    if (shape == 0) {
+      background[0] = majority[0];
+      background[1] = majority[1];
+      background[2] = majority[2];
+    } else {
+      refine_background(grid, shape, grid_n, line, inset, background);
+    }
     const int color = classify_color(&cal, palette, background, found->threshold);
     symbols[i] = shape * palette->palette_size + color;
-    lcc_release(grid);
-    lcc_release(fg);
   }
+  for (int s = 1; s < 8; s++) lcc_release(masks[s]);
+  lcc_release(grid);
 
   BitWriter writer = { 0 };
   const int bits_per = palette->bits;
@@ -1037,4 +1204,115 @@ int lcc_decode_image(const LccImage *image, int mode, uint8_t **payload, int *pa
   }
   lcc_prep_free(&prep);
   return saw_constraint ? LCC_UNSUPPORTED : LCC_ERR;
+}
+
+static int detect_camera_frame(const LccImage *image, LccFound *found) {
+  int factor = 1;
+  while (image->width / factor > 960 || image->height / factor > 960) factor++;
+  uint8_t *scaled = NULL;
+  LccImage view = *image;
+  if (factor > 1) {
+    const int w = image->width / factor;
+    const int h = image->height / factor;
+    if (w < 32 || h < 32) return 0;
+    scaled = lcc_alloc((size_t)w * (size_t)h * 3);
+    if (!scaled) return 0;
+    const int area = factor * factor;
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        int acc[3] = { 0, 0, 0 };
+        for (int dy = 0; dy < factor; dy++) {
+          for (int dx = 0; dx < factor; dx++) {
+            const int p = ((y * factor + dy) * image->width + (x * factor + dx)) * 3;
+            acc[0] += image->data[p];
+            acc[1] += image->data[p + 1];
+            acc[2] += image->data[p + 2];
+          }
+        }
+        const int o = (y * w + x) * 3;
+        scaled[o] = (uint8_t)(acc[0] / area);
+        scaled[o + 1] = (uint8_t)(acc[1] / area);
+        scaled[o + 2] = (uint8_t)(acc[2] / area);
+      }
+    }
+    view.width = w;
+    view.height = h;
+    view.data = scaled;
+  }
+  LccPrep prep;
+  if (!lcc_prep_init(&prep, &view)) {
+    lcc_release(scaled);
+    return 0;
+  }
+  int ok = 0;
+  for (size_t i = 0; i < sizeof(PERSP_NAMES) / sizeof(PERSP_NAMES[0]); i++) {
+    LccVariant variant;
+    if (!lcc_variant_build(&prep, PERSP_NAMES[i], &variant)) continue;
+    ok = lcc_detect_perspective(&view, &variant, found);
+    lcc_variant_free(&variant);
+    if (ok) break;
+  }
+  lcc_prep_free(&prep);
+  if (ok && factor > 1) {
+    if (found->has_h) {
+      found->H[6] /= factor;
+      found->H[7] /= factor;
+      found->H[8] /= factor;
+    }
+    found->origin_x *= factor;
+    found->origin_y *= factor;
+    found->s *= factor;
+  }
+  lcc_release(scaled);
+  return ok;
+}
+
+int lcc_scan_frames(
+  const LccImage *frames,
+  int count,
+  uint8_t **payload,
+  int *payload_len,
+  LccDecodeMeta *meta
+) {
+  if (!frames || count <= 0 || count > 8) return LCC_BAD_INPUT;
+  LccDet *dets = lcc_alloc((size_t)count * sizeof(LccDet));
+  if (!dets) return LCC_ERR;
+  memset(dets, 0, (size_t)count * sizeof(LccDet));
+  int any = 0;
+  for (int i = 0; i < count; i++) {
+    LccFound found;
+    memset(&found, 0, sizeof(found));
+    if (!frames[i].data || !detect_camera_frame(&frames[i], &found)) continue;
+    dets[i].valid = 1;
+    dets[i].version = found.version;
+    dets[i].N = found.N;
+    dets[i].score = found.score;
+    dets[i].has_h = found.has_h;
+    memcpy(dets[i].H, found.H, sizeof(found.H));
+    dets[i].origin_x = found.origin_x;
+    dets[i].origin_y = found.origin_y;
+    dets[i].s = found.s;
+    any = 1;
+  }
+  if (!any) {
+    lcc_release(dets);
+    return LCC_ERR;
+  }
+  uint8_t *rgb = NULL;
+  int width = 0, height = 0, used = 0, stacked = 0, version = 0, N = 0, module = 0, quiet = 0;
+  double noise = 0;
+  const int stack_status = lcc_stack_frames(
+    frames, dets, count, 4, 0, 1400, 257,
+    &rgb, &width, &height, &used, &stacked, &noise, &version, &N, &module, &quiet
+  );
+  lcc_release(dets);
+  if (stack_status != LCC_OK || !rgb) {
+    lcc_release(rgb);
+    return stack_status == LCC_OK ? LCC_ERR : stack_status;
+  }
+  LccImage image = { width, height, rgb };
+  const int mode = stacked ? 1 : 2;
+  const int status = lcc_decode_image(&image, mode, payload, payload_len, meta);
+  lcc_release(rgb);
+  return status;
 }

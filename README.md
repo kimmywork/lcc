@@ -242,7 +242,7 @@ Web 版在 `docs/`：
 - 打开失败时会自动回退约束：1920×1080 → 1280×720 → `environment` → 默认摄像头；权限被拒、无摄像头、被其他应用占用都有对应提示。失败状态会显示 `secure / protocol / mediaDevices / error` 诊断信息。
 - “多帧”可选 1/3/5 帧。连续扫描或拍照时，每帧独立检测，按 `version/N` 分组，统一投影到 canonical 模块网格后平均，再交给正常解码器。
 - 多帧平均主要降低随机噪声、传感器噪声和压缩噪声；对随机噪声的理论增益约为 `√N`。它不修复运动模糊或失焦。中性色偏由 finder/alignment 的分通道黑白场矫正，不靠多帧平均。
-- 网页扫描优先使用 `docs/lib/lcc.wasm` 里的 C 合成和 C 解码。WASM 加载失败、或遇到 constraint 码时回退到 JS。
+- 网页扫描优先走 `docs/lib/lcc.wasm`。单帧和多帧都在 C 里完成透视侦测、合成和解码；画面长边超过 960 像素时先缩小再找定位标记。形状用模板匹配。WASM 失败或遇到 constraint 码时回退到 JS。
 - 多帧叠加要求码面基本静止；未来做动画/喷泉码时，不能把不同 payload 的帧直接平均，必须按帧 ID 分组。
 - 扫描统计会显示叠加帧数、canonical 模块尺寸和帧间 σ，作为置信度参考；最终仍由 RS + CRC 校验。
 
@@ -265,7 +265,7 @@ src/
   decoder.js         轴对齐 + 自动解码 + 灰度多假设
   detector.js        透视检测 / 单应
   preprocess.js      Otsu / 自适应阈值 / 闭运算 / 多假设
-  illumination.js    finder/alignment 黑白场；色偏时分通道
+  illumination.js    finder/alignment 分通道黑白场
   local-rank.js      L2 局部 rank 分类
   calibration.js     L1/灰/彩校准
   layout.js          finder / 对齐 / 格式带 / 枢纽 / Hilbert

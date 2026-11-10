@@ -2,17 +2,19 @@
  * Local illumination model built from the fixed finder/alignment patterns.
  *
  * LCC has three 7x7 finders and (for N>=25) a 5x5 alignment pattern at the
- * fourth corner.  Their black and white modules are known neutrals.  A shared
- * luminance field removes lighting gradients.  When the white locators are
- * chromatic, each channel gets its own black/white field so a neutral colour
- * cast is removed before palette classification.  The hub affine still fits
- * whatever these locators cannot see.
+ * fourth corner.  Their black and white modules are known neutrals.  Each
+ * channel always gets its own black/white field, including a cast of only a
+ * few levels.  Samples are the median of an inset inside the module, so the
+ * one-module white ring is not mixed with neighbouring black.  A bilinear
+ * field still follows shading.  The hub affine fits a residual the white
+ * point cannot see.
  */
 
 import { clamp } from './color.js';
-import { sampleImage } from './image-utils.js';
+import { sampleImageBilinear } from './image-utils.js';
 
 const WHITE_NEUTRAL_SPREAD = 12;
+const INSET = [-0.2, 0, 0.2];
 
 function solveReal(A, b) {
   const n = b.length;
@@ -99,11 +101,24 @@ function scaleChannel(value, black, white) {
   return clamp(Math.round(((value - black) * 255) / range), 0, 255);
 }
 
-export function buildIlluminationModel({ layout, image, pointAt, sampleRadius = 1 }) {
+function medianRgb(samples) {
+  return [0, 1, 2].map((ch) => {
+    const values = samples.map((rgb) => rgb[ch]).sort((a, b) => a - b);
+    return values[Math.floor(values.length / 2)];
+  });
+}
+
+export function buildIlluminationModel({ layout, image, pointAt }) {
   const N = layout.N;
   const rgbAt = (row, col) => {
-    const [x, y] = pointAt(row, col);
-    return sampleImage(image, x, y, sampleRadius);
+    const samples = [];
+    for (const dv of INSET) {
+      for (const du of INSET) {
+        const [x, y] = pointAt(row + dv, col + du);
+        samples.push(sampleImageBilinear(image, x, y));
+      }
+    }
+    return medianRgb(samples);
   };
 
   const points = [];
@@ -154,20 +169,20 @@ export function buildIlluminationModel({ layout, image, pointAt, sampleRadius = 
   const chromatic = channelSpread(points.map((p) => p.whiteRgb)) > WHITE_NEUTRAL_SPREAD;
   const blackFit = fitModel(points, 'black');
   const whiteFit = fitModel(points, 'white');
-  const blackFits = chromatic ? [0, 1, 2].map((ch) => fitModel(points, `black${ch}`)) : null;
-  const whiteFits = chromatic ? [0, 1, 2].map((ch) => fitModel(points, `white${ch}`)) : null;
-  const useChromatic = chromatic && blackFits.every(Boolean) && whiteFits.every(Boolean);
+  const blackFits = [0, 1, 2].map((ch) => fitModel(points, `black${ch}`));
+  const whiteFits = [0, 1, 2].map((ch) => fitModel(points, `white${ch}`));
+  const perChannel = blackFits.every(Boolean) && whiteFits.every(Boolean);
 
   const blackAt = (row, col) => evalModel(blackFit, row, col) ?? 0;
   const whiteAt = (row, col) => evalModel(whiteFit, row, col) ?? 255;
 
   return {
     points,
-    chromatic: useChromatic,
+    chromatic,
     blackAt,
     whiteAt,
     normalize(rgb, row, col) {
-      if (!useChromatic) {
+      if (!perChannel) {
         const b = blackAt(row, col);
         const w = whiteAt(row, col);
         const range = Math.max(20, w - b);

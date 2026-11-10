@@ -10,13 +10,12 @@
  * foreground is the complement of the background, but black/white is used
  * when the complement is too close to the background (notably mid-grey).
  *
- * The decoder treats a module as two colour clusters: the majority cluster is
- * the background (and therefore the colour symbol), the minority cluster is
- * the foreground mask (and therefore the shape symbol).  This avoids the
- * colour bias that a whole-module average would introduce.
+ * The decoder reads the background from the module border, where strokes are
+ * inset, and matches the luminance residual against the eight known templates.
+ * Clustering is kept for callers that already have a binary mask.
  */
 
-import { deltaE76, rgbToLab } from './color.js';
+import { deltaE76, luminance, rgbToLab } from './color.js';
 
 export const SHAPE_NAMES = ['blank', '/', '\\', 'X', '+', '-', '|', 'square'];
 export const SHAPE_COUNT = SHAPE_NAMES.length;
@@ -249,6 +248,126 @@ export function refineBackground(grid, shapeIndex, gridN, lineWidth = shapeLineW
   }
   if (indices.length < grid.length * 0.15) return medianRgb(grid, all);
   return medianRgb(grid, indices);
+}
+
+function backgroundFromMajority(samples) {
+  const levels = samples.map((rgb) => luminance(rgb));
+  const bins = new Uint16Array(32);
+  for (const value of levels) bins[Math.min(31, value / 8 | 0)]++;
+  let mode = 0;
+  for (let i = 1; i < bins.length; i++) {
+    if (bins[i] > bins[mode]) mode = i;
+  }
+  const center = mode * 8 + 4;
+  const indices = [];
+  for (let i = 0; i < levels.length; i++) {
+    if (Math.abs(levels[i] - center) <= 14) indices.push(i);
+  }
+  if (indices.length < samples.length * 0.25) {
+    return medianRgb(samples, samples.map((_, i) => i));
+  }
+  return medianRgb(samples, indices);
+}
+
+function shiftedMaskValue(mask, gridN, x, y, dx, dy) {
+  const tx = x + dx;
+  const ty = y + dy;
+  if (tx < 0 || ty < 0 || tx >= gridN || ty >= gridN) return 0;
+  return mask[ty * gridN + tx];
+}
+
+function normalizedCorrelation(residual, mask, gridN, dx, dy) {
+  const n = gridN * gridN;
+  let sumR = 0;
+  let sumM = 0;
+  for (let y = 0; y < gridN; y++) {
+    for (let x = 0; x < gridN; x++) {
+      sumR += residual[y * gridN + x];
+      sumM += shiftedMaskValue(mask, gridN, x, y, dx, dy);
+    }
+  }
+  const meanR = sumR / n;
+  const meanM = sumM / n;
+  let num = 0;
+  let denR = 0;
+  let denM = 0;
+  for (let y = 0; y < gridN; y++) {
+    for (let x = 0; x < gridN; x++) {
+      const ar = residual[y * gridN + x] - meanR;
+      const am = shiftedMaskValue(mask, gridN, x, y, dx, dy) - meanM;
+      num += ar * am;
+      denR += ar * ar;
+      denM += am * am;
+    }
+  }
+  if (denR < 1e-6 || denM < 1e-6) return 0;
+  return Math.abs(num) / Math.sqrt(denR * denM);
+}
+
+function sharpenResidual(residual, gridN) {
+  const blurred = new Float64Array(residual.length);
+  for (let y = 0; y < gridN; y++) {
+    for (let x = 0; x < gridN; x++) {
+      let sum = 0;
+      let count = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= gridN) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= gridN) continue;
+          sum += residual[yy * gridN + xx];
+          count++;
+        }
+      }
+      blurred[y * gridN + x] = sum / count;
+    }
+  }
+  const out = new Float64Array(residual.length);
+  for (let i = 0; i < residual.length; i++) {
+    out[i] = residual[i] + 0.8 * (residual[i] - blurred[i]);
+  }
+  return out;
+}
+
+/**
+ * Match one module against the eight known stroke templates.
+ * Background is the majority luminance, so a stroke touching the border does
+ * not move the colour.  The score is the absolute
+ * normalised correlation of the luminance residual, so a light stroke on a
+ * dark ground and a dark stroke on a light ground both match.  A weak best
+ * score is blank.
+ */
+export function matchShape(samples, gridN, options = {}) {
+  const lineWidth = options.lineWidth ?? shapeLineWidth(gridN);
+  const inset = options.inset ?? shapeInset(gridN);
+  const maxShift = options.maxShift ?? 1;
+  const blankThreshold = options.blankThreshold ?? 0.32;
+  const background = backgroundFromMajority(samples);
+  const bgL = luminance(background);
+  let residual = Float64Array.from(samples, (rgb) => luminance(rgb) - bgL);
+  if (options.sharpen) residual = sharpenResidual(residual, gridN);
+
+  const costs = new Array(SHAPE_COUNT).fill(0);
+  let shape = 0;
+  let best = 0;
+  for (let i = 1; i < SHAPE_COUNT; i++) {
+    const template = shapeMaskGrid(i, gridN, lineWidth, inset);
+    let score = 0;
+    for (let dy = -maxShift; dy <= maxShift; dy++) {
+      for (let dx = -maxShift; dx <= maxShift; dx++) {
+        const candidate = normalizedCorrelation(residual, template, gridN, dx, dy);
+        if (candidate > score) score = candidate;
+      }
+    }
+    costs[i] = score;
+    if (score > best) {
+      best = score;
+      shape = i;
+    }
+  }
+  if (best < blankThreshold) shape = 0;
+  return { shape, costs, score: best, background, lineWidth, inset };
 }
 
 export function clusterModule(grid) {

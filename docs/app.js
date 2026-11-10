@@ -5,7 +5,7 @@ import {
   renderSVG,
   stackCanonicalFrames,
 } from './lib/index.js';
-import { decodeAutoWasm, stackCanonicalFramesWasm } from './lib/lcc-wasm.js';
+import { decodeAutoWasm, scanFramesWasm, stackCanonicalFramesWasm } from './lib/lcc-wasm.js';
 
 const $ = (id) => document.getElementById(id);
 const textEl = $('text');
@@ -280,11 +280,13 @@ async function decodeRGB(image, options = {}) {
   if (!options.silent) setStatus('解码中…', 'busy');
   await new Promise((resolve) => setTimeout(resolve, 20));
   try {
-    let result = null;
-    try {
-      result = await decodeAutoWasm(image, options.detector ? { detector: options.detector } : {});
-    } catch {
-      result = null;
+    let result = options.result ?? null;
+    if (!result) {
+      try {
+        result = await decodeAutoWasm(image, options.detector ? { detector: options.detector } : {});
+      } catch {
+        result = null;
+      }
     }
     if (!result) {
       result = decodeAuto(image, options.detector ? { detector: options.detector } : {});
@@ -323,15 +325,35 @@ async function decodeRGB(image, options = {}) {
 
 async function captureAndDecode({ silent = false } = {}) {
   const count = Number($('stackFrames').value) || 1;
+  const frames = [];
+  for (let i = 0; i < count; i++) {
+    if (count > 1) setStatus(`多帧叠加：${i}/${count}…`, 'busy');
+    frames.push(captureFrame());
+    if (i < count - 1) await new Promise((resolve) => setTimeout(resolve, 90));
+  }
+  try {
+    const scanned = await scanFramesWasm(frames);
+    if (scanned) {
+      drawImage(scanCanvas, frames[frames.length - 1]);
+      return decodeRGB(frames[frames.length - 1], {
+        result: scanned,
+        stackInfo: {
+          frames: count,
+          requested: count,
+          stacked: count > 1,
+        },
+        silent,
+      });
+    }
+  } catch {
+    // C scan missed the symbol; the JS detector is the fallback.
+  }
   let stack;
   if (count > 1) {
-    setStatus(`多帧叠加：0/${count}…`, 'busy');
-    stack = await captureStack(count, (done, total) => {
-      setStatus(`多帧叠加：${done}/${total}…`, 'busy');
-    });
+    stack = await captureStack(count);
   } else {
     stack = {
-      image: captureFrame(),
+      image: frames[0],
       frames: 1,
       requested: 1,
       stacked: false,

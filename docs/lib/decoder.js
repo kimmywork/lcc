@@ -29,7 +29,7 @@ import { buildIlluminationModel } from './illumination.js';
 import { localRankSymbols } from './local-rank.js';
 import { BLACK, WHITE, makeLayout } from './layout.js';
 import { generatePalette } from './palettes.js';
-import { classifyShape, clusterModule, refineBackground } from './shapes.js';
+import { matchShape, refineBackground } from './shapes.js';
 import { makeWhitening } from './whitening.js';
 
 function finderCandidates(mask, width, height, horizontal) {
@@ -205,16 +205,26 @@ function modulePoint(det, row, col, u, v) {
 
 function sampleModuleGrid(image, det, row, col, gridN) {
   const out = new Array(gridN * gridN);
+  const offsets = [0.25, 0.75];
   for (let gy = 0; gy < gridN; gy++) {
     for (let gx = 0; gx < gridN; gx++) {
-      const [x, y] = modulePoint(
-        det,
-        row,
-        col,
-        (gx + 0.5) / gridN,
-        (gy + 0.5) / gridN,
-      );
-      out[gy * gridN + gx] = sampleImageBilinear(image, x, y);
+      const acc = [0, 0, 0];
+      for (const fv of offsets) {
+        for (const fu of offsets) {
+          const [x, y] = modulePoint(
+            det,
+            row,
+            col,
+            (gx + fu) / gridN,
+            (gy + fv) / gridN,
+          );
+          const rgb = sampleImageBilinear(image, x, y);
+          acc[0] += rgb[0];
+          acc[1] += rgb[1];
+          acc[2] += rgb[2];
+        }
+      }
+      out[gy * gridN + gx] = [acc[0] / 4, acc[1] / 4, acc[2] / 4];
     }
   }
   return out;
@@ -324,18 +334,20 @@ export function decode(image, options = {}) {
       const normalized = grid.map((rgb) => (
         illumination ? illumination.normalize(rgb, r, c) : rgb
       ));
-      const cluster = clusterModule(normalized);
-      const shapeResult = classifyShape(cluster.foregroundMask, gridN, {
+      const shapeResult = matchShape(normalized, gridN, {
         lineWidth: shapeLineWidthGrid,
         inset: shapeInsetGrid,
+        sharpen: (det.s || 0) < 12,
       });
-      const background = refineBackground(
-        normalized,
-        shapeResult.shape,
-        gridN,
-        shapeLineWidthGrid,
-        shapeInsetGrid,
-      );
+      const background = shapeResult.shape === 0
+        ? shapeResult.background
+        : refineBackground(
+          normalized,
+          shapeResult.shape,
+          gridN,
+          shapeLineWidthGrid,
+          shapeInsetGrid,
+        );
       const colorIndex = calibrator.classify(background);
       symbolsCal[i] = shapeResult.shape * layer.paletteSize + colorIndex;
       rgbSamples[i] = background;

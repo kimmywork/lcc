@@ -30,7 +30,7 @@ if command -v emcc >/dev/null 2>&1 || [ -x "$HOME/emsdk/upstream/emscripten/emcc
     -O3 \
     -Inative \
     -s STANDALONE_WASM=1 \
-    -s EXPORTED_FUNCTIONS='["_lcc_api_stack","_lcc_api_decode","_lcc_last","_lcc_last_len","_malloc","_free"]' \
+    -s EXPORTED_FUNCTIONS='["_lcc_api_stack","_lcc_api_decode","_lcc_api_scan","_lcc_last","_lcc_last_len","_malloc","_free"]' \
     -o docs/lib/lcc.wasm
 else
   export ZIG_GLOBAL_CACHE_DIR="${ZIG_GLOBAL_CACHE_DIR:-$ROOT/.zig-cache}"
@@ -41,6 +41,7 @@ else
     -Wl,--no-entry \
     -Wl,--export=lcc_api_stack \
     -Wl,--export=lcc_api_decode \
+    -Wl,--export=lcc_api_scan \
     -Wl,--export=lcc_last \
     -Wl,--export=lcc_last_len \
     -Wl,--export=malloc \

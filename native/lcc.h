@@ -117,12 +117,14 @@ int lcc_stack_frames(
   int *out_quiet);
 
 int lcc_decode_image(const LccImage *image, int mode, uint8_t **payload, int *payload_len, LccDecodeMeta *meta);
+int lcc_scan_frames(const LccImage *frames, int count, uint8_t **payload, int *payload_len, LccDecodeMeta *meta);
 
 void *lcc_alloc(size_t n);
 void lcc_release(void *p);
 
 int lcc_api_stack(const uint8_t *input, int input_len);
 int lcc_api_decode(const uint8_t *rgb, int width, int height, int mode);
+int lcc_api_scan(const uint8_t *input, int input_len);
 uint8_t *lcc_last(void);
 int lcc_last_len(void);
 

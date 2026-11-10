@@ -253,3 +253,39 @@ export async function decodeAutoWasm(image, options = {}) {
     wasm.free(ptr);
   }
 }
+
+function packScan(frames) {
+  const chunks = [];
+  const i32 = (n) => {
+    const b = new Uint8Array(4);
+    new DataView(b.buffer).setInt32(0, n | 0, true);
+    chunks.push(b);
+  };
+  i32(frames.length);
+  for (const frame of frames) {
+    i32(frame.width);
+    i32(frame.height);
+    i32(frame.data.length);
+    chunks.push(frame.data);
+  }
+  const total = chunks.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of chunks) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+}
+
+export async function scanFramesWasm(frames) {
+  const wasm = await loadInstance();
+  const packed = packScan(frames);
+  const ptr = writeBytes(wasm, packed);
+  try {
+    wasm.lcc_api_scan(ptr, packed.length);
+    return parseDecode(readLast(wasm));
+  } finally {
+    wasm.free(ptr);
+  }
+}
