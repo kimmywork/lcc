@@ -1,7 +1,6 @@
 #include "lcc_internal.h"
 
 #include <math.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -768,7 +767,7 @@ static double ncc_vec(const double *res, const double *mask, int count) {
   double sum_m = 0;
   int i = 0;
 #if defined(__wasm_simd128__)
-  if (((uintptr_t)res & 15) == 0 && ((uintptr_t)mask & 15) == 0) {
+  {
     v128_t sr = wasm_f64x2_splat(0);
     v128_t sm = wasm_f64x2_splat(0);
     for (; i + 2 <= count; i += 2) {
@@ -788,7 +787,7 @@ static double ncc_vec(const double *res, const double *mask, int count) {
   double num = 0, dr = 0, dm = 0;
   i = 0;
 #if defined(__wasm_simd128__)
-  if (((uintptr_t)res & 15) == 0 && ((uintptr_t)mask & 15) == 0) {
+  {
     const v128_t mr = wasm_f64x2_splat(mean_r);
     const v128_t mm = wasm_f64x2_splat(mean_m);
     v128_t nsum = wasm_f64x2_splat(0);
