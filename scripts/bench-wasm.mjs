@@ -17,7 +17,6 @@ function parseArgs(argv) {
     manifest: 'training/corpus/eval/manifest.json',
     mode: 'scan',
     limit: 0,
-    features: 0,
     repeat: 1,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -59,22 +58,10 @@ async function main() {
   const root = path.dirname(manifestPath);
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const limit = Number(args.limit) || manifest.samples.length;
-  const features = Number(args.features) || 0;
   const repeat = Math.max(1, Number(args.repeat) || 1);
 
   // The loader caches the instance. Reaching through the module keeps the
   // benchmark independent of a feature-specific wrapper.
-  if (features) {
-    const { setWasmFeatures } = await import('../docs/lib/lcc-wasm.js');
-    if (typeof setWasmFeatures === 'function') {
-      const actual = await setWasmFeatures(features);
-      if (actual !== features) {
-        console.error('warning: this lcc.wasm has models disabled; rebuild with `npm run build:wasm:model`');
-      }
-    } else {
-      console.error('warning: this lcc-wasm.js has no setWasmFeatures()');
-    }
-  }
 
   let ok = 0;
   let wrong = 0;
@@ -117,7 +104,6 @@ async function main() {
   console.log(JSON.stringify({
     manifest: path.basename(root),
     mode: args.mode,
-    features,
     total,
     ok,
     wrong,

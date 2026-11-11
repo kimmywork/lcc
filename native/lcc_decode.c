@@ -1039,19 +1039,13 @@ static int match_shape(
   int sharpen,
   int background[3],
   const double *planes_model,
-  int model_n,
   int model_stride,
-  int model_mode,
   int shape_set,
   int module_row,
   int module_col
 ) {
   const int count = grid_n * grid_n;
   g_dbg_last_slot = -1;
-  const int features = lcc_model_get_features();
-  const int abs_score = (features & LCC_FEATURE_SHAPE_ABS) != 0;
-  const int shape_cnn = (features & LCC_FEATURE_SHAPE_CNN) != 0;
-  const int shape_mlp = (features & LCC_FEATURE_SHAPE_MLP) != 0;
   background_majority(grid, count, background);
   int bg_rgb[3] = { background[0], background[1], background[2] };
   const double bg_l = lcc_luminance(bg_rgb);
@@ -1062,7 +1056,7 @@ static int match_shape(
   }
 
   double in16[256];
-  if ((planes_model && model_mode) || shape_cnn || shape_mlp || g_dbg_capture) make_model_input(res, grid_n, in16);
+  if (shape_set <= 8 || g_dbg_capture) make_model_input(res, grid_n, in16);
 
   int dbg_slot = -1;
   if (g_dbg_capture && g_dbg_count < LCC_DEBUG_MAX) {
@@ -1076,41 +1070,7 @@ static int match_shape(
     for (int i = 0; i < 256; i++) g_dbg_res[(size_t)dbg_slot * 256 + i] = (float)in16[i];
   }
 
-  if (shape_mlp && shape_set <= 8) {
-    if (planes_model) {
-      int cheap = 0;
-      double b1 = 0;
-      double b2 = 0;
-      for (int s = 1; s < 8; s++) {
-        const double *base = planes_model + (size_t)(s - 1) * 9 * (size_t)model_stride;
-        const double score = fabs(ncc_vec(in16, base + 4 * (size_t)model_stride, 256));
-        if (score > b1) {
-          b2 = b1;
-          b1 = score;
-          cheap = s;
-        } else if (score > b2) {
-          b2 = score;
-        }
-      }
-      if (b1 < 0.32) cheap = 0;
-      if (b1 >= 0.55 && b1 - b2 >= 0.10) {
-        if (dbg_slot >= 0) g_dbg_shape[dbg_slot] = cheap;
-        return cheap;
-      }
-    }
-    float x[256];
-    float logits[8];
-    for (int i = 0; i < 256; i++) x[i] = (float)in16[i];
-    lcc_cheap_shape_forward(x, logits);
-    int shape = 0;
-    for (int k = 1; k < 8; k++) {
-      if (logits[k] > logits[shape]) shape = k;
-    }
-    if (dbg_slot >= 0) g_dbg_shape[dbg_slot] = shape;
-    return shape;
-  }
-
-  if (shape_cnn && shape_set <= 8) {
+  if (shape_set <= 8 && planes_model) {
     // Cheap 16x16 template gate: skip the network when the correlation is
     // strong and unambiguous.
     if (planes_model) {
@@ -1146,63 +1106,17 @@ static int match_shape(
     return shape;
   }
 
-  if (planes_model && model_mode && shape_set <= 8) {
-    double model_res[1024];
-    int n = 16;
-    if (model_mode == 2) {
-      float x[256];
-      float y[1024];
-      for (int i = 0; i < 256; i++) x[i] = (float)in16[i];
-      lcc_sr_forward(x, y);
-      for (int i = 0; i < 1024; i++) model_res[i] = y[i];
-      n = 32;
-      double peak = 0;
-      for (int i = 0; i < 1024; i++) {
-        const double a = fabs(model_res[i]);
-        if (a > peak) peak = a;
-      }
-      if (peak < 0.35) {
-        if (dbg_slot >= 0) g_dbg_shape[dbg_slot] = 0;
-        return 0;
-      }
-    } else {
-      for (int i = 0; i < 256; i++) model_res[i] = in16[i];
-    }
-    const int model_count = n * n;
-    int shape = 0;
-    double best = 0;
-    for (int s = 1; s < shape_set; s++) {
-      const double *base = planes_model + (size_t)(s - 1) * 9 * (size_t)model_stride;
-      double score = fabs(ncc_vec(model_res, base + 4 * (size_t)model_stride, model_count));
-      if (score < 0.72) {
-        for (int shift = 0; shift < 9; shift++) {
-          if (shift == 4) continue;
-          const double candidate = fabs(ncc_vec(model_res, base + (size_t)shift * (size_t)model_stride, model_count));
-          if (candidate > score) score = candidate;
-        }
-      }
-      if (score > best) {
-        best = score;
-        shape = s;
-      }
-    }
-    if (best < 0.32) shape = 0;
-    if (dbg_slot >= 0) g_dbg_shape[dbg_slot] = shape;
-    return shape;
-  }
-
+  // 32-shape digital/print layers use the analytic templates.
   if (sharpen) sharpen_residual(res, grid_n);
   int shape = 0;
   double best = 0;
   for (int s = 1; s < shape_set; s++) {
     const double *base = planes + (size_t)(s - 1) * 9 * (size_t)stride;
-    double score = ncc_vec(res, base + 4 * (size_t)stride, count);
-    if (abs_score && score < 0) score = -score;
+    double score = fabs(ncc_vec(res, base + 4 * (size_t)stride, count));
     if (score < 0.72) {
       for (int shift = 0; shift < 9; shift++) {
         if (shift == 4) continue;
-        double candidate = ncc_vec(res, base + (size_t)shift * (size_t)stride, count);
-        if (abs_score && candidate < 0) candidate = -candidate;
+        const double candidate = fabs(ncc_vec(res, base + (size_t)shift * (size_t)stride, count));
         if (candidate > score) score = candidate;
       }
     }
@@ -1493,10 +1407,7 @@ static int decode_found(
   double *planes = NULL;
   uint8_t *band = NULL;
   int *order = NULL;
-  const int features = lcc_model_get_features();
-  const int model_mode = (features & LCC_FEATURE_SR_CNN) ? 2
-    : (features & LCC_FEATURE_SR_BILINEAR) ? 1 : 0;
-  int model_n = 0;
+  const int model_n = 16;
   int model_stride = 0;
   double *planes_model = NULL;
   if (patterns) {
@@ -1531,8 +1442,7 @@ static int decode_found(
         }
       }
     }
-    if (shape_set <= 8 && (model_mode || (features & (LCC_FEATURE_SHAPE_CNN | LCC_FEATURE_SHAPE_MLP)))) {
-      model_n = (model_mode == 2 && !(features & LCC_FEATURE_SHAPE_CNN)) ? 32 : 16;
+    if (shape_set <= 8 && found->s >= 12.0) {
       const int model_count = model_n * model_n;
       model_stride = (model_count + 1) & ~1;
       planes_model = lcc_alloc((size_t)7 * 9 * (size_t)model_stride * sizeof(double));
@@ -1628,7 +1538,7 @@ static int decode_found(
     int majority[3];
     const int shape = match_shape(
       grid, grid_n, planes, plane_stride, sharpen, majority,
-      planes_model, model_n, model_stride, model_mode, shape_set, row, col
+      planes_model, model_stride, shape_set, row, col
     );
     int background[3];
     if (shape == 0) {
@@ -1820,20 +1730,6 @@ static int detect_camera_frame(const LccImage *image, LccFound *found, int *vari
     if (ok) {
       if (variant_index) *variant_index = (int)i;
       break;
-    }
-  }
-  if (!ok && prep.gray && (lcc_model_get_features() & LCC_FEATURE_FINDER)) {
-    const int try_variants[] = { 3, 9 };
-    for (size_t k = 0; k < sizeof(try_variants) / sizeof(try_variants[0]); k++) {
-      const int vi = try_variants[k];
-      LccVariant variant;
-      if (!lcc_variant_build(&prep, PERSP_NAMES[vi], &variant)) continue;
-      ok = lcc_detect_finder_net(&view, prep.gray, &variant, found);
-      lcc_variant_free(&variant);
-      if (ok) {
-        if (variant_index) *variant_index = vi;
-        break;
-      }
     }
   }
   lcc_prep_free(&prep);

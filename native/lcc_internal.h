@@ -86,8 +86,6 @@ typedef struct {
 
 int lcc_detect_axis(const LccImage *image, const LccVariant *variant, LccFound *found);
 int lcc_detect_perspective(const LccImage *image, const LccVariant *variant, LccFound *found);
-int lcc_detect_finder_net(const LccImage *image, const uint8_t *gray, const LccVariant *variant, LccFound *found);
-int lcc_finder_centers(const uint8_t *gray, int width, int height, double out[3][2]);
 int lcc_debug_decode_forced(
   const LccImage *image,
   const LccFound *found,

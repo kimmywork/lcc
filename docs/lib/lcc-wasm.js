@@ -278,50 +278,6 @@ function packScan(frames) {
   return out;
 }
 
-export async function setWasmFeatures(features) {
-  const wasm = await loadInstance();
-  return wasm.lcc_api_set_features(features | 0);
-}
-
-function parseDebugRecords(bytes) {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const count = view.getUint32(0, true);
-  const records = [];
-  for (let i = 0; i < count; i++) {
-    const base = 4 + i * (16 + 256 * 4);
-    const res = new Float32Array(256);
-    for (let k = 0; k < 256; k++) res[k] = view.getFloat32(base + 16 + k * 4, true);
-    records.push({
-      row: view.getInt32(base, true),
-      col: view.getInt32(base + 4, true),
-      gridN: view.getInt32(base + 8, true),
-      shape: view.getInt32(base + 12, true),
-      res,
-    });
-  }
-  return records;
-}
-
-function parseDebugRecordsSymbols(bytes) {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const count = view.getUint32(0, true);
-  const records = [];
-  for (let i = 0; i < count; i++) {
-    const base = 4 + i * (20 + 256 * 4);
-    const res = new Float32Array(256);
-    for (let k = 0; k < 256; k++) res[k] = view.getFloat32(base + 20 + k * 4, true);
-    records.push({
-      row: view.getInt32(base, true),
-      col: view.getInt32(base + 4, true),
-      gridN: view.getInt32(base + 8, true),
-      shape: view.getInt32(base + 12, true),
-      symbol: view.getInt32(base + 16, true),
-      res,
-    });
-  }
-  return records;
-}
-
 export async function debugResidualsWasm(image, options = {}) {
   const wasm = await loadInstance();
   const mode = options.detector === 'axis' ? 1 : options.detector === 'perspective' ? 2 : 0;
@@ -369,24 +325,6 @@ export async function debugResidualsForcedSymbolsWasm(image, homography, version
       version, N, moduleSize,
     );
     return { status, records: parseDebugRecordsSymbols(readLast(wasm)) };
-  } finally {
-    wasm.free(ptr);
-  }
-}
-
-export async function finderCentersWasm(image) {
-  const wasm = await loadInstance();
-  const ptr = writeBytes(wasm, image.data);
-  try {
-    wasm.lcc_api_finder(ptr, image.width, image.height);
-    const bytes = readLast(wasm);
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const ok = view.getUint32(0, true) !== 0;
-    const centers = [];
-    for (let i = 0; i < 3; i++) {
-      centers.push([view.getFloat64(4 + i * 16, true), view.getFloat64(12 + i * 16, true)]);
-    }
-    return { ok, centers };
   } finally {
     wasm.free(ptr);
   }

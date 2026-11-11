@@ -14,7 +14,7 @@
 ## 1. 产品约束与目标
 
 - 运行时：浏览器 / WASM，不能依赖 ONNX Runtime、PyTorch、OpenCV DNN。
-- 默认包要小：当前 `lcc.wasm` 约 140 KB；模型代码放在 `LCC_ENABLE_MODELS=1` 后面。
+- 默认包要小：当前 `lcc.wasm` 约 176 KB；只保留 width8 形状分类器，不再有 feature 开关。
 - 训练数据可以大量合成；真实手机照片只做验证。
 - 产品未发布，编码格式、形状集、色板、ECC、定位图形、静区都可以改。
 - 目标不是论文 SOTA，而是：

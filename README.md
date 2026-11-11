@@ -227,7 +227,7 @@ Web 编码面板的“高级设置”里可以直接调这些参数；生成后�
 
 - [LCC vs Cimbar：差距、形状维度与增强路线](docs/research/cimbar-vs-lcc-and-shape.md)：Cimbar 对比、形状 + 颜色符号设计草案、验证计划与风险。形状维度已按“线形态”方案实现；报告保留为研究记录。
 - [微信二维码模型与 WASM 速度](docs/research/wechat-qr-models-and-wasm-speed.md)：检测网和超分网各自替换哪一段、能不能减 LCC 的前置，以及扫描重复解码为什么比模型更值得先做。研究记录，尚未训练或接入。
-- [LCC 形状层超分与 finder 检测的小模型实验](docs/research/lcc-cnn-finder-superscale-experiment.md)：用编码器合成数据训练 finder 热图网和 8 形态超分网，手写 C 算子接进 WASM。finder 和超分默认不启用；换成 C 实际残差训练的形状分类器有增益（`blur_shape` 44.6% → 57.5%，真实照片 4/13 → 5/13），作为可选层 `16` 保留。
+- [LCC 形状层超分与 finder 检测的小模型实验](docs/research/lcc-cnn-finder-superscale-experiment.md)：用编码器合成数据训练 finder 热图网和 8 形态超分网，手写 C 算子接进 WASM。finder 和超分已证伪并移除；C 实际残差训练的 width8 形状分类器有增益（`blur_shape` 44.6% → 56.7%，真实照片 4/13 → 5/13），作为 shape 层默认路径，模块 <12 px 时回退模板。
 - [LCC 编码与解码联合调研报告](docs/research/lcc-encoding-decoding-co-design.md)：把解码侧调研和编码侧可调整空间放在一起。结论是优先做 RS erasure、相机 profile、Gray 映射、亮度/色度分离、形状集/线宽、校准图案和 C 残差分类器；不建议继续加通用 SR、全图 finder 或 Transformer 解码器。
 - [LCC 解码器下一阶段深度调研报告](docs/research/LCC_深度调研报告.md)：另一份独立调研，重点是模块错误率 → GF(256) 符号 → RS 预算的链路、打包失配、GMD/擦除和廉价判别器。其 P4/P5 数字需要在 C 实际残差上复核，本文档已记录复核结果。
 - [LCC 实验状态与路线](docs/research/lcc-experiment-status.md)：已做/有效/无效/待实验清单，以及当前 feature 开关和下一步建议。

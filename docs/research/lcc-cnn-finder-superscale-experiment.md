@@ -1,7 +1,7 @@
 # LCC 形状层超分与 finder 检测的小模型实验
 
-> **状态**：实验记录，2026-11-11。两个小模型都已训练并接进 C/WASM，**默认关闭**。
-> **结论先行**：finder CNN 和超分 CNN 不默认启用。finder 在真实照片上没有增加成功帧，单帧还要多花约 36–41 ms；超分 CNN 在 C 实际残差上反而比 16×16 双线性模板差，且每模块约 1.0 ms。把训练输入换成 C 实际残差后，一个 **模块级形状分类器** 有真实增益：`blur_shape` 44.6% → 57.5%，真实照片 4/13 → 5/13；但平均慢约 1.5×。因此分类器作为可选层 `16` 保留，默认仍为 0。默认 `lcc.wasm` 仍是 140 KB，模型代码只在 `LCC_ENABLE_MODELS=1` 时编入。
+> **状态**：实验记录，2026-11-11；2026-11-12 更新。finder/SR/bilinear/abs/MLP 已从生产路径移除；当前默认只保留 C 实际残差训练的 width8 形状分类器（模块 ≥12 px 时启用，否则回退模板）。
+> **结论先行**：finder CNN 和超分 CNN 已证伪并从生产路径移除。C 实际残差训练的 **width8 形状分类器** 有真实增益：`blur_shape` 44.6% → 56.7%，真实照片 4/13 → 5/13；当前默认启用，模块有效尺寸 <12 px 时回退模板。finder/SR/bilinear/abs/MLP 不再保留为可选开关。
 
 ---
 
@@ -156,32 +156,13 @@ C 端失败的原因不是卷积算错，而是**输入分布对不上**：训�
 
 ---
 
-## 5. 决策
+## 5. 清理结果（2026-11-12）
 
-**默认不启用任何模型；C 实际残差训练的形状分类器作为可选层保留。**
-
-- `lcc.wasm` 默认仍是 140 KB，和实验前一致。
-- 模型代码、权重和 C 算子保留在仓库里，只在 `LCC_ENABLE_MODELS=1` 时编译：
-  ```bash
-  npm run build:wasm:model
-  ```
-- 运行时用 `setWasmFeatures()` 打开：
-  - `1`：finder CNN 兜底（不推荐）
-  - `2`：双线性放大到 16×16 + 绝对值 NCC
-  - `4`：SR CNN（不推荐）
-  - `8`：只把形状 NCC 改成绝对值
-  - `16`：C 实际残差训练的形状分类器 + 模板门控（候选）
-  - 0（默认）：原路径
-
-分类器目前是“值得继续”的那一层，原因是它直接吃 C 实际残差，参数只有 1.3k（width 8），并且能用廉价模板门控跳过大部分模块。它还没有默认打开，因为 `blur_shape` 平均耗时 259 → 395 ms，失败帧的 p95 也更长。
-
-如果继续优化，优先级是：
-
-1. **把失败帧也纳入训练**。当前只导出了 180/240 个能走到数据模块的帧；剩余 60 个需要从已知几何强制对齐后再取残差。
-2. **继续压分类器**：width 6/8、int8、SIMD 卷积；目标是把每模块 0.195 ms 再降一个量级。
-3. **门控放在原生 grid 上**，避免为了门控先做 16×16 重采样和一套模板相关。
-4. **只对低分/低 margin 模块跑分类器**，并在失败变体之间复用结果或提前判定。
-5. **finder 暂不投入**：当前 192×192、30 MFLOP 的网在干净路径上不划算，且没有找到能救回的真实样本。
+- finder CNN、SR CNN、双线性+abs、形状 NCC 取绝对值、cheap MLP、小卷积 stem：**全部移除**。
+- 生产路径只保留：C 实际残差训练的 **width8 形状分类器 + 16×16 模板门控**；模块有效尺寸 `<12 px` 时回退模板。
+- 不再有 `LCC_ENABLE_MODELS` / `build:wasm:model` / `setWasmFeatures` 这些开关。
+- 默认 `lcc.wasm` 约 176 KB。
+- 旧实验的 feature 编号只保留在历史记录中，不再可运行。
 
 ---
 
@@ -193,34 +174,19 @@ node scripts/gen-lcc-corpus.mjs --out training/corpus/clean --count 240 --seed 1
 uv run python training/make_eval.py --count 240
 uv run python training/make_blur_eval.py --count 240
 
-# 2. 训练
-uv run python training/make_finder_dataset.py --count 6400 --val 800
-uv run python training/train_finder.py --epochs 48 --width 32 --out training/models/finder32.pt
-uv run python training/make_sr_dataset.py --count 30000 --eval 3000 --hard 3000
-uv run python training/train_sr.py --epochs 24 --width 16
-
-# 2b. 导出 C 实际残差，训练 C 一致形状分类器
+# 2. 导出 C 实际残差，训练当前默认的形状分类器
 npm run build:wasm
 node scripts/dump-c-residuals.mjs --manifest training/corpus/blur_shape/manifest.json
 uv run python training/train_shape_classifier.py --epochs 20 --width 8 --out training/models/shape_cls8.pt
 
-# 3. 导出 C 权重并编译模型版 WASM
-uv run python training/export_weights.py
-npm run build:wasm:model
-
-# 4. 对比
-node scripts/bench-wasm.mjs --manifest training/corpus/eval/manifest.json --mode scan --features 0
-node scripts/bench-wasm.mjs --manifest training/corpus/eval/manifest.json --mode scan --features 1
-node scripts/bench-wasm.mjs --manifest training/corpus/eval/manifest.json --mode scan --features 16
-node scripts/bench-wasm.mjs --manifest training/corpus/blur_shape/manifest.json --mode decode --detector axis --features 0
-node scripts/bench-wasm.mjs --manifest training/corpus/blur_shape/manifest.json --mode decode --detector axis --features 4
-node scripts/bench-wasm.mjs --manifest training/corpus/blur_shape/manifest.json --mode decode --detector axis --features 16
-node scripts/bench-real.mjs --features 0
-node scripts/bench-real.mjs --features 1
-node scripts/bench-real.mjs --features 16
-
-# 5. 回到默认小 WASM
+# 3. 导出权重并编译默认 WASM（分类器已内置）
+uv run python training/export_weights.py --shape training/models/shape_cls8.pt
 npm run build:wasm
+
+# 4. 默认路径对比
+node scripts/bench-wasm.mjs --manifest training/corpus/eval/manifest.json --mode scan
+node scripts/bench-wasm.mjs --manifest training/corpus/blur_shape/manifest.json --mode decode --detector axis
+node scripts/bench-real.mjs
 ```
 
 `npm test` 在默认路径上仍为 21/21 通过。
