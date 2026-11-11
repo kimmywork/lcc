@@ -49,7 +49,7 @@ Usage:
     --input <text>         text payload
     --input-file <path>    read payload from file (UTF-8)
     --output <path>        output PNG (required)
-    --layer <name>          L1/L2a/L3b/L3c/L1s/L2s/L3s/L3t/... default L1
+    --layer <name>          L1/L2a/L3b/L3c/L1s/L2s/L3s/L3t/L3u/L4eS/L4fS/... default L1
     --size <px>            canvas side, default 1024
     --mode <fill|compact>  default fill
     --palette <maxmin|harmony>  default maxmin

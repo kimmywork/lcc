@@ -17,8 +17,30 @@
 
 import { deltaE76, luminance, rgbToLab } from './color.js';
 
-export const SHAPE_NAMES = ['blank', '/', '\\', 'X', '+', '-', '|', 'square'];
+export const SHAPE_NAMES = [
+  'blank', '/', '\\', 'X', '+', '-', '|', 'square',
+  'left-v', 'right-v', 'down-v', 'up-v',
+  'left-arrow', 'up-arrow', 'right-arrow', 'down-arrow',
+  'nw-arrow', 'ne-arrow', 'se-arrow', 'sw-arrow',
+  'tl-block', 'tr-block', 'bl-block', 'br-block',
+  't-down', 't-right', 't-left', 't-up',
+  'diag-t1', 'diag-t2', 'diag-t3', 'diag-t4',
+];
+
+/** Compact labels for UI / SVG titles. */
+export const SHAPE_LABELS = [
+  'blank', '/', '\\', 'X', '+', '-', '|', '□',
+  '<', '>', 'V', '^',
+  '←', '↑', '→', '↓',
+  '↖', '↗', '↘', '↙',
+  '▘', '▝', '▖', '▗',
+  '┬', '├', '┤', '┴',
+  'dT1', 'dT2', 'dT3', 'dT4',
+];
+
+/** The classic eight-shape set is still the default for camera layers. */
 export const SHAPE_COUNT = SHAPE_NAMES.length;
+export const LEGACY_SHAPE_COUNT = 8;
 
 const maskCache = new Map();
 
@@ -72,36 +94,163 @@ function distanceToSegment(px, py, x1, y1, x2, y2) {
   return Math.hypot(px - x, py - y);
 }
 
-function shapeSegmentsPx(shapeIndex, size, inset) {
+/**
+ * Geometry in module pixels.  `fills` are filled rectangles; `segments` are
+ * stroked lines.  The same function is used at size=1 for normalized SVG
+ * output, so pixel and vector rendering stay in sync.
+ */
+function shapeGeometry(shapeIndex, size, inset) {
   const lo = inset;
   const hi = size - inset;
   const mid = size / 2;
-  const squareInset = Math.max(inset, Math.round(size / 4));
+  const squareInset = Math.max(inset, size >= 4 ? Math.round(size / 4) : size / 4);
   const slo = squareInset;
   const shi = size - squareInset;
+  const head = Math.max(inset * 2, size / 6);
+  const gap = Math.max(inset, size * 0.08);
+  const segments = [];
+  const fills = [];
+  const add = (x1, y1, x2, y2) => segments.push([x1, y1, x2, y2]);
+
   switch (shapeIndex) {
     case 1: // /
-      return [[lo, hi, hi, lo]];
+      add(lo, hi, hi, lo);
+      break;
     case 2: // backslash
-      return [[lo, lo, hi, hi]];
+      add(lo, lo, hi, hi);
+      break;
     case 3: // X
-      return [[lo, hi, hi, lo], [lo, lo, hi, hi]];
+      add(lo, hi, hi, lo);
+      add(lo, lo, hi, hi);
+      break;
     case 4: // +
-      return [[lo, mid, hi, mid], [mid, lo, mid, hi]];
+      add(lo, mid, hi, mid);
+      add(mid, lo, mid, hi);
+      break;
     case 5: // -
-      return [[lo, mid, hi, mid]];
+      add(lo, mid, hi, mid);
+      break;
     case 6: // |
-      return [[mid, lo, mid, hi]];
+      add(mid, lo, mid, hi);
+      break;
     case 7: // square
-      return [
-        [slo, slo, shi, slo],
-        [shi, slo, shi, shi],
-        [shi, shi, slo, shi],
-        [slo, shi, slo, slo],
-      ];
+      add(slo, slo, shi, slo);
+      add(shi, slo, shi, shi);
+      add(shi, shi, slo, shi);
+      add(slo, shi, slo, slo);
+      break;
+
+    // Four chevrons built from a side midpoint to the opposite corners.
+    case 8: // <
+      add(lo, mid, hi, lo);
+      add(lo, mid, hi, hi);
+      break;
+    case 9: // >
+      add(hi, mid, lo, lo);
+      add(hi, mid, lo, hi);
+      break;
+    case 10: // V
+      add(mid, hi, lo, lo);
+      add(mid, hi, hi, lo);
+      break;
+    case 11: // ^
+      add(mid, lo, lo, hi);
+      add(mid, lo, hi, hi);
+      break;
+
+    // Midline arrows: half shaft plus a short V head.
+    case 12: // left
+      add(mid, mid, lo, mid);
+      add(lo, mid, lo + head, mid - head);
+      add(lo, mid, lo + head, mid + head);
+      break;
+    case 13: // up
+      add(mid, mid, mid, lo);
+      add(mid, lo, mid - head, lo + head);
+      add(mid, lo, mid + head, lo + head);
+      break;
+    case 14: // right
+      add(mid, mid, hi, mid);
+      add(hi, mid, hi - head, mid - head);
+      add(hi, mid, hi - head, mid + head);
+      break;
+    case 15: // down
+      add(mid, mid, mid, hi);
+      add(mid, hi, mid - head, hi - head);
+      add(mid, hi, mid + head, hi - head);
+      break;
+
+    // Diagonal arrows.
+    case 16: // nw
+      add(mid, mid, lo, lo);
+      add(lo, lo, lo + head, lo);
+      add(lo, lo, lo, lo + head);
+      break;
+    case 17: // ne
+      add(mid, mid, hi, lo);
+      add(hi, lo, hi - head, lo);
+      add(hi, lo, hi, lo + head);
+      break;
+    case 18: // se
+      add(mid, mid, hi, hi);
+      add(hi, hi, hi - head, hi);
+      add(hi, hi, hi, hi - head);
+      break;
+    case 19: // sw
+      add(mid, mid, lo, hi);
+      add(lo, hi, lo + head, hi);
+      add(lo, hi, lo, hi - head);
+      break;
+
+    // One filled quarter block.
+    case 20: fills.push([lo, lo, mid - gap, mid - gap]); break;
+    case 21: fills.push([mid + gap, lo, hi, mid - gap]); break;
+    case 22: fills.push([lo, mid + gap, mid - gap, hi]); break;
+    case 23: fills.push([mid + gap, mid + gap, hi, hi]); break;
+
+    // T junctions: one full midline plus one half midline.
+    case 24: // T down
+      add(lo, mid, hi, mid);
+      add(mid, mid, mid, hi);
+      break;
+    case 25: // T right
+      add(mid, lo, mid, hi);
+      add(mid, mid, hi, mid);
+      break;
+    case 26: // T left
+      add(mid, lo, mid, hi);
+      add(lo, mid, mid, mid);
+      break;
+    case 27: // T up
+      add(lo, mid, hi, mid);
+      add(mid, lo, mid, mid);
+      break;
+
+    // Diagonal T: one full diagonal plus half of the other diagonal.
+    case 28:
+      add(lo, hi, hi, lo);
+      add(mid, mid, lo, lo);
+      break;
+    case 29:
+      add(lo, hi, hi, lo);
+      add(mid, mid, hi, hi);
+      break;
+    case 30:
+      add(lo, lo, hi, hi);
+      add(mid, mid, hi, lo);
+      break;
+    case 31:
+      add(lo, lo, hi, hi);
+      add(mid, mid, lo, hi);
+      break;
     default:
-      return [];
+      break;
   }
+  return { segments, fills };
+}
+
+function shapeSegmentsPx(shapeIndex, size, inset) {
+  return shapeGeometry(shapeIndex, size, inset).segments;
 }
 
 /** Binary foreground mask for one shape at a square pixel resolution. */
@@ -111,8 +260,8 @@ export function shapeMask(shapeIndex, size, lineWidth = shapeLineWidth(size), in
   if (cached) return cached;
 
   const mask = new Uint8Array(size * size);
-  const segments = shapeSegmentsPx(shapeIndex, size, inset);
-  if (segments.length === 0) {
+  const { segments, fills } = shapeGeometry(shapeIndex, size, inset);
+  if (segments.length === 0 && fills.length === 0) {
     maskCache.set(key, mask);
     return mask;
   }
@@ -122,10 +271,18 @@ export function shapeMask(shapeIndex, size, lineWidth = shapeLineWidth(size), in
     for (let x = 0; x < size; x++) {
       const px = x + 0.5;
       let on = false;
-      for (const [x1, y1, x2, y2] of segments) {
-        if (distanceToSegment(px, py, x1, y1, x2, y2) <= half) {
+      for (const [x0, y0, x1, y1] of fills) {
+        if (px >= x0 && px <= x1 && py >= y0 && py <= y1) {
           on = true;
           break;
+        }
+      }
+      if (!on) {
+        for (const [x1, y1, x2, y2] of segments) {
+          if (distanceToSegment(px, py, x1, y1, x2, y2) <= half) {
+            on = true;
+            break;
+          }
         }
       }
       if (on) mask[y * size + x] = 1;
@@ -160,10 +317,11 @@ export function classifyShape(mask, gridN, options = {}) {
   const lineWidth = options.lineWidth ?? shapeLineWidth(gridN);
   const inset = options.inset ?? shapeInset(gridN);
   const maxShift = options.maxShift ?? 1;
-  const costs = new Array(SHAPE_COUNT);
+  const shapeCount = options.shapeCount ?? LEGACY_SHAPE_COUNT;
+  const costs = new Array(shapeCount);
   let best = 0;
   let bestCost = Infinity;
-  for (let i = 0; i < SHAPE_COUNT; i++) {
+  for (let i = 0; i < shapeCount; i++) {
     const template = shapeMaskGrid(i, gridN, lineWidth, inset);
     let d = Infinity;
     for (let dy = -maxShift; dy <= maxShift; dy++) {
@@ -343,15 +501,16 @@ export function matchShape(samples, gridN, options = {}) {
   const inset = options.inset ?? shapeInset(gridN);
   const maxShift = options.maxShift ?? 1;
   const blankThreshold = options.blankThreshold ?? 0.32;
+  const shapeCount = options.shapeCount ?? LEGACY_SHAPE_COUNT;
   const background = backgroundFromMajority(samples);
   const bgL = luminance(background);
   let residual = Float64Array.from(samples, (rgb) => luminance(rgb) - bgL);
   if (options.sharpen) residual = sharpenResidual(residual, gridN);
 
-  const costs = new Array(SHAPE_COUNT).fill(0);
+  const costs = new Array(shapeCount).fill(0);
   let shape = 0;
   let best = 0;
-  for (let i = 1; i < SHAPE_COUNT; i++) {
+  for (let i = 1; i < shapeCount; i++) {
     const template = shapeMaskGrid(i, gridN, lineWidth, inset);
     let score = 0;
     for (let dy = -maxShift; dy <= maxShift; dy++) {
@@ -485,33 +644,10 @@ export function clusterModule(grid) {
 
 /** Geometry in normalized module coordinates, for SVG output. */
 export function shapeSegmentsNormalized(shapeIndex, inset = 1 / 16) {
-  const lo = inset;
-  const hi = 1 - inset;
-  const mid = 0.5;
-  const squareInset = Math.max(inset, 1 / 4);
-  const slo = squareInset;
-  const shi = 1 - squareInset;
-  switch (shapeIndex) {
-    case 1:
-      return [[lo, hi, hi, lo]];
-    case 2:
-      return [[lo, lo, hi, hi]];
-    case 3:
-      return [[lo, hi, hi, lo], [lo, lo, hi, hi]];
-    case 4:
-      return [[lo, mid, hi, mid], [mid, lo, mid, hi]];
-    case 5:
-      return [[lo, mid, hi, mid]];
-    case 6:
-      return [[mid, lo, mid, hi]];
-    case 7:
-      return [
-        [slo, slo, shi, slo],
-        [shi, slo, shi, shi],
-        [shi, shi, slo, shi],
-        [slo, shi, slo, slo],
-      ];
-    default:
-      return [];
-  }
+  return shapeGeometry(shapeIndex, 1, inset).segments;
+}
+
+/** Filled rectangles in normalized module coordinates, for SVG output. */
+export function shapeFillsNormalized(shapeIndex, inset = 1 / 16) {
+  return shapeGeometry(shapeIndex, 1, inset).fills;
 }

@@ -42,6 +42,7 @@ test('wasm decode matches JS on clean, cast, and stacked images', async () => {
     ['L1', { layer: 'L1', width: 512, height: 512, mode: 'fill', constraint: false, maxModulePx: 32 }],
     ['L3c', { layer: 'L3c', version: 2, moduleSize: 24, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32, constraint: false }],
     ['L3s', { layer: 'L3s', version: 2, moduleSize: 24, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32 }],
+    ['L3u', { layer: 'L3u', version: 4, moduleSize: 16, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32 }],
   ];
   for (const [layer, options] of samples) {
     const image = encode(`wasm ${layer}`, options).image;

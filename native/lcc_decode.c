@@ -180,7 +180,13 @@ static int read_format(const LccImage *image, const LccFound *found, const LccVa
 
 static const char *layer_name_of(const FormatInfo *fmt) {
   if (fmt->mode_id == 7) {
-    if (fmt->shape_layer_id == 3 && fmt->shape_ext) return "L3t";
+    if (fmt->shape_ext) {
+      if (fmt->shape_layer_id == 0) return "L3u";
+      if (fmt->shape_layer_id == 1) return "L4eS";
+      if (fmt->shape_layer_id == 2) return "L4fS";
+      if (fmt->shape_layer_id == 3) return "L3t";
+      return NULL;
+    }
     if (fmt->shape_layer_id == 0) return "L3b";
     if (fmt->shape_layer_id == 1) return "L1s";
     if (fmt->shape_layer_id == 2) return "L2s";
@@ -601,8 +607,12 @@ static void shape_mask(int shape, int size, int line, int inset, uint8_t *mask) 
   const double square = inset > (int)lcc_js_round(size / 4.0) ? inset : (int)lcc_js_round(size / 4.0);
   const double slo = square;
   const double shi = size - square;
+  const double head = (inset * 2.0) > (size / 6.0) ? (inset * 2.0) : (size / 6.0);
+  const double gap = (size * 0.08) > inset ? (size * 0.08) : inset;
   double segs[4][4];
   int nseg = 0;
+  double rects[4][4];
+  int nrect = 0;
   if (shape == 1) {
     segs[0][0] = lo; segs[0][1] = hi; segs[0][2] = hi; segs[0][3] = lo; nseg = 1;
   } else if (shape == 2) {
@@ -623,15 +633,101 @@ static void shape_mask(int shape, int size, int line, int inset, uint8_t *mask) 
     segs[2][0] = shi; segs[2][1] = shi; segs[2][2] = slo; segs[2][3] = shi;
     segs[3][0] = slo; segs[3][1] = shi; segs[3][2] = slo; segs[3][3] = slo;
     nseg = 4;
+  } else if (shape == 8) {
+    segs[0][0] = lo; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = lo;
+    segs[1][0] = lo; segs[1][1] = mid; segs[1][2] = hi; segs[1][3] = hi; nseg = 2;
+  } else if (shape == 9) {
+    segs[0][0] = hi; segs[0][1] = mid; segs[0][2] = lo; segs[0][3] = lo;
+    segs[1][0] = hi; segs[1][1] = mid; segs[1][2] = lo; segs[1][3] = hi; nseg = 2;
+  } else if (shape == 10) {
+    segs[0][0] = mid; segs[0][1] = hi; segs[0][2] = lo; segs[0][3] = lo;
+    segs[1][0] = mid; segs[1][1] = hi; segs[1][2] = hi; segs[1][3] = lo; nseg = 2;
+  } else if (shape == 11) {
+    segs[0][0] = mid; segs[0][1] = lo; segs[0][2] = lo; segs[0][3] = hi;
+    segs[1][0] = mid; segs[1][1] = lo; segs[1][2] = hi; segs[1][3] = hi; nseg = 2;
+  } else if (shape == 12) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = lo; segs[0][3] = mid;
+    segs[1][0] = lo; segs[1][1] = mid; segs[1][2] = lo + head; segs[1][3] = mid - head;
+    segs[2][0] = lo; segs[2][1] = mid; segs[2][2] = lo + head; segs[2][3] = mid + head; nseg = 3;
+  } else if (shape == 13) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = mid; segs[0][3] = lo;
+    segs[1][0] = mid; segs[1][1] = lo; segs[1][2] = mid - head; segs[1][3] = lo + head;
+    segs[2][0] = mid; segs[2][1] = lo; segs[2][2] = mid + head; segs[2][3] = lo + head; nseg = 3;
+  } else if (shape == 14) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = mid;
+    segs[1][0] = hi; segs[1][1] = mid; segs[1][2] = hi - head; segs[1][3] = mid - head;
+    segs[2][0] = hi; segs[2][1] = mid; segs[2][2] = hi - head; segs[2][3] = mid + head; nseg = 3;
+  } else if (shape == 15) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = mid; segs[0][3] = hi;
+    segs[1][0] = mid; segs[1][1] = hi; segs[1][2] = mid - head; segs[1][3] = hi - head;
+    segs[2][0] = mid; segs[2][1] = hi; segs[2][2] = mid + head; segs[2][3] = hi - head; nseg = 3;
+  } else if (shape == 16) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = lo; segs[0][3] = lo;
+    segs[1][0] = lo; segs[1][1] = lo; segs[1][2] = lo + head; segs[1][3] = lo;
+    segs[2][0] = lo; segs[2][1] = lo; segs[2][2] = lo; segs[2][3] = lo + head; nseg = 3;
+  } else if (shape == 17) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = lo;
+    segs[1][0] = hi; segs[1][1] = lo; segs[1][2] = hi - head; segs[1][3] = lo;
+    segs[2][0] = hi; segs[2][1] = lo; segs[2][2] = hi; segs[2][3] = lo + head; nseg = 3;
+  } else if (shape == 18) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = hi;
+    segs[1][0] = hi; segs[1][1] = hi; segs[1][2] = hi - head; segs[1][3] = hi;
+    segs[2][0] = hi; segs[2][1] = hi; segs[2][2] = hi; segs[2][3] = hi - head; nseg = 3;
+  } else if (shape == 19) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = lo; segs[0][3] = hi;
+    segs[1][0] = lo; segs[1][1] = hi; segs[1][2] = lo + head; segs[1][3] = hi;
+    segs[2][0] = lo; segs[2][1] = hi; segs[2][2] = lo; segs[2][3] = hi - head; nseg = 3;
+  } else if (shape == 20) {
+    rects[0][0] = lo; rects[0][1] = lo; rects[0][2] = mid - gap; rects[0][3] = mid - gap; nrect = 1;
+  } else if (shape == 21) {
+    rects[0][0] = mid + gap; rects[0][1] = lo; rects[0][2] = hi; rects[0][3] = mid - gap; nrect = 1;
+  } else if (shape == 22) {
+    rects[0][0] = lo; rects[0][1] = mid + gap; rects[0][2] = mid - gap; rects[0][3] = hi; nrect = 1;
+  } else if (shape == 23) {
+    rects[0][0] = mid + gap; rects[0][1] = mid + gap; rects[0][2] = hi; rects[0][3] = hi; nrect = 1;
+  } else if (shape == 24) {
+    segs[0][0] = lo; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = mid;
+    segs[1][0] = mid; segs[1][1] = mid; segs[1][2] = mid; segs[1][3] = hi; nseg = 2;
+  } else if (shape == 25) {
+    segs[0][0] = mid; segs[0][1] = lo; segs[0][2] = mid; segs[0][3] = hi;
+    segs[1][0] = mid; segs[1][1] = mid; segs[1][2] = hi; segs[1][3] = mid; nseg = 2;
+  } else if (shape == 26) {
+    segs[0][0] = mid; segs[0][1] = lo; segs[0][2] = mid; segs[0][3] = hi;
+    segs[1][0] = lo; segs[1][1] = mid; segs[1][2] = mid; segs[1][3] = mid; nseg = 2;
+  } else if (shape == 27) {
+    segs[0][0] = lo; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = mid;
+    segs[1][0] = mid; segs[1][1] = lo; segs[1][2] = mid; segs[1][3] = mid; nseg = 2;
+  } else if (shape == 28) {
+    segs[0][0] = lo; segs[0][1] = hi; segs[0][2] = hi; segs[0][3] = lo;
+    segs[1][0] = mid; segs[1][1] = mid; segs[1][2] = lo; segs[1][3] = lo; nseg = 2;
+  } else if (shape == 29) {
+    segs[0][0] = lo; segs[0][1] = hi; segs[0][2] = hi; segs[0][3] = lo;
+    segs[1][0] = mid; segs[1][1] = mid; segs[1][2] = hi; segs[1][3] = hi; nseg = 2;
+  } else if (shape == 30) {
+    segs[0][0] = lo; segs[0][1] = lo; segs[0][2] = hi; segs[0][3] = hi;
+    segs[1][0] = mid; segs[1][1] = mid; segs[1][2] = hi; segs[1][3] = lo; nseg = 2;
+  } else if (shape == 31) {
+    segs[0][0] = lo; segs[0][1] = lo; segs[0][2] = hi; segs[0][3] = hi;
+    segs[1][0] = mid; segs[1][1] = mid; segs[1][2] = lo; segs[1][3] = hi; nseg = 2;
   }
   const double half = line / 2.0 > 0.5 ? line / 2.0 : 0.5;
   for (int y = 0; y < size; y++) {
     for (int x = 0; x < size; x++) {
+      const double px = x + 0.5;
+      const double py = y + 0.5;
       int on = 0;
-      for (int s = 0; s < nseg; s++) {
-        if (dist_seg(x + 0.5, y + 0.5, segs[s][0], segs[s][1], segs[s][2], segs[s][3]) <= half) {
+      for (int r = 0; r < nrect; r++) {
+        if (px >= rects[r][0] && px <= rects[r][2] && py >= rects[r][1] && py <= rects[r][3]) {
           on = 1;
           break;
+        }
+      }
+      if (!on) {
+        for (int s = 0; s < nseg; s++) {
+          if (dist_seg(px, py, segs[s][0], segs[s][1], segs[s][2], segs[s][3]) <= half) {
+            on = 1;
+            break;
+          }
         }
       }
       mask[y * size + x] = (uint8_t)on;
@@ -938,6 +1034,7 @@ static int match_shape(
   int model_n,
   int model_stride,
   int model_mode,
+  int shape_set,
   int module_row,
   int module_col
 ) {
@@ -967,7 +1064,7 @@ static int match_shape(
     for (int i = 0; i < 256; i++) g_dbg_res[(size_t)dbg_slot * 256 + i] = (float)in16[i];
   }
 
-  if (shape_cnn) {
+  if (shape_cnn && shape_set <= 8) {
     // Cheap 16x16 template gate: skip the network when the correlation is
     // strong and unambiguous.
     if (planes_model) {
@@ -1003,7 +1100,7 @@ static int match_shape(
     return shape;
   }
 
-  if (planes_model && model_mode) {
+  if (planes_model && model_mode && shape_set <= 8) {
     double model_res[1024];
     int n = 16;
     if (model_mode == 2) {
@@ -1028,7 +1125,7 @@ static int match_shape(
     const int model_count = n * n;
     int shape = 0;
     double best = 0;
-    for (int s = 1; s < 8; s++) {
+    for (int s = 1; s < shape_set; s++) {
       const double *base = planes_model + (size_t)(s - 1) * 9 * (size_t)model_stride;
       double score = fabs(ncc_vec(model_res, base + 4 * (size_t)model_stride, model_count));
       if (score < 0.72) {
@@ -1051,7 +1148,7 @@ static int match_shape(
   if (sharpen) sharpen_residual(res, grid_n);
   int shape = 0;
   double best = 0;
-  for (int s = 1; s < 8; s++) {
+  for (int s = 1; s < shape_set; s++) {
     const double *base = planes + (size_t)(s - 1) * 9 * (size_t)stride;
     double score = ncc_vec(res, base + 4 * (size_t)stride, count);
     if (abs_score && score < 0) score = -score;
@@ -1323,10 +1420,11 @@ static int decode_found(
     return LCC_ERR;
   }
   const int patterns = palette->shape_set > 1;
+  const int shape_set = palette->shape_set > 1 ? palette->shape_set : 1;
   int grid_n = 0;
   int line = 0;
   int inset = 0;
-  uint8_t *masks[8] = { 0 };
+  uint8_t *masks[33] = { 0 };
   int *grid = NULL;
   if (patterns) {
     grid_n = (int)lcc_js_round(found->s > 0 ? found->s : 12);
@@ -1338,7 +1436,7 @@ static int decode_found(
     inset = (int)lcc_js_round((double)(inset_px < 1 ? 1 : inset_px) * grid_n / found->s);
     if (line < 1) line = 1;
     if (inset < 1) inset = 1;
-    for (int s = 1; s < 8; s++) {
+    for (int s = 1; s < shape_set; s++) {
       masks[s] = lcc_alloc((size_t)grid_n * grid_n);
       shape_mask(s, grid_n, line, inset, masks[s]);
     }
@@ -1359,11 +1457,11 @@ static int decode_found(
     const int count = grid_n * grid_n;
     plane_stride = (count + 1) & ~1;
     step = grid_n * 2;
-    planes = lcc_alloc((size_t)7 * 9 * (size_t)plane_stride * sizeof(double));
+    planes = lcc_alloc((size_t)(shape_set - 1) * 9 * (size_t)plane_stride * sizeof(double));
     band = lcc_alloc((size_t)step * (size_t)layout.N * (size_t)step * 3);
     order = lcc_alloc((size_t)D * sizeof(int));
     if (!grid || !planes || !band || !order) {
-      for (int s = 1; s < 8; s++) lcc_release(masks[s]);
+      for (int s = 1; s < shape_set; s++) lcc_release(masks[s]);
       lcc_release(grid);
       lcc_release(planes);
       lcc_release(band);
@@ -1372,7 +1470,7 @@ static int decode_found(
       lcc_layout_free(&layout);
       return LCC_ERR;
     }
-    for (int s = 1; s < 8; s++) {
+    for (int s = 1; s < shape_set; s++) {
       for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
           double *dst = planes + (((size_t)(s - 1) * 9 + (size_t)((dy + 1) * 3 + (dx + 1))) * (size_t)plane_stride);
@@ -1387,7 +1485,7 @@ static int decode_found(
         }
       }
     }
-    if (model_mode || (features & LCC_FEATURE_SHAPE_CNN)) {
+    if (shape_set <= 8 && (model_mode || (features & LCC_FEATURE_SHAPE_CNN))) {
       model_n = (model_mode == 2 && !(features & LCC_FEATURE_SHAPE_CNN)) ? 32 : 16;
       const int model_count = model_n * model_n;
       model_stride = (model_count + 1) & ~1;
@@ -1396,7 +1494,7 @@ static int decode_found(
       if (!planes_model || !templ) {
         lcc_release(planes_model);
         lcc_release(templ);
-        for (int s = 1; s < 8; s++) lcc_release(masks[s]);
+        for (int s = 1; s < shape_set; s++) lcc_release(masks[s]);
         lcc_release(grid);
         lcc_release(planes);
         lcc_release(band);
@@ -1483,7 +1581,7 @@ static int decode_found(
     int majority[3];
     const int shape = match_shape(
       grid, grid_n, planes, plane_stride, sharpen, majority,
-      planes_model, model_n, model_stride, model_mode, row, col
+      planes_model, model_n, model_stride, model_mode, shape_set, row, col
     );
     int background[3];
     if (shape == 0) {
@@ -1496,7 +1594,7 @@ static int decode_found(
     const int color = classify_color(&cal, palette, background, found->threshold);
     symbols[i] = shape * palette->palette_size + color;
   }
-  for (int s = 1; s < 8; s++) lcc_release(masks[s]);
+  for (int s = 1; s < shape_set; s++) lcc_release(masks[s]);
   lcc_release(grid);
   lcc_release(planes);
   lcc_release(planes_model);

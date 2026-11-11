@@ -7,7 +7,12 @@
  */
 
 import { LAYERS } from './constants.js';
-import { foregroundFor, shapeLineWidth, shapeSegmentsNormalized } from './shapes.js';
+import {
+  foregroundFor,
+  shapeFillsNormalized,
+  shapeLineWidth,
+  shapeSegmentsNormalized,
+} from './shapes.js';
 
 function rgbCss(rgb) {
   return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
@@ -70,6 +75,13 @@ export function renderSVG({
 
       if (shapeIndex > 0) {
         const foreground = foregroundFor(background);
+        const fills = shapeFillsNormalized(shapeIndex, inset);
+        for (const [x0, y0, x1, y1] of fills) {
+          parts.push(
+            `<rect x="${x + x0}" y="${y + y0}" width="${x1 - x0}" height="${y1 - y0}" ` +
+            `fill="${rgbCss(foreground)}"/>`,
+          );
+        }
         const segments = shapeSegmentsNormalized(shapeIndex, inset);
         for (const [x1, y1, x2, y2] of segments) {
           parts.push(
