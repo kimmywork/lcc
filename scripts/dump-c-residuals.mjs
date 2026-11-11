@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { encode } from '../src/encoder.js';
-import { debugResidualsWasm } from '../docs/lib/lcc-wasm.js';
+import { debugResidualsWasm, debugResidualsForcedWasm } from '../docs/lib/lcc-wasm.js';
 
 function parseArgs(argv) {
   const out = { manifest: 'training/corpus/blur_shape/manifest.json', out: 'training/corpus/c_residuals', detector: 'axis', onlyOk: false };
@@ -78,9 +78,17 @@ async function main() {
     const sample = manifest.samples[i];
     const image = readImage(root, sample);
     const truth = expectedShapes(sample);
-    const debug = await debugResidualsWasm(image, { detector: String(args.detector) });
+    const debug = args.detector === 'forced'
+      ? await debugResidualsForcedWasm(
+        image,
+        sample.homographyModuleFlat,
+        sample.version,
+        sample.N,
+        sample.moduleSize,
+      )
+      : await debugResidualsWasm(image, { detector: String(args.detector) });
     if (!debug.records.length) continue;
-    if (args.onlyOk && debug.status !== 0) continue;
+    if (args.onlyOk && args.detector !== 'forced' && debug.status !== 0) continue;
     const sampleIndex = samples.length;
     samples.push({
       file: sample.file,

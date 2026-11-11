@@ -1702,6 +1702,29 @@ static int decode_found(
   return LCC_OK;
 }
 
+int lcc_debug_decode_forced(
+  const LccImage *image,
+  const LccFound *found,
+  const char *variant_name,
+  uint8_t **payload,
+  int *payload_len,
+  LccDecodeMeta *meta
+) {
+  LccPrep prep;
+  if (!lcc_prep_init(&prep, image)) return LCC_ERR;
+  LccVariant variant;
+  if (!lcc_variant_build(&prep, variant_name, &variant)) {
+    lcc_prep_free(&prep);
+    return LCC_ERR;
+  }
+  LccFound local = *found;
+  local.threshold = lcc_threshold_at(&variant, image->width / 2.0, image->height / 2.0);
+  const int status = decode_found(image, &variant, &local, payload, payload_len, meta);
+  lcc_variant_free(&variant);
+  lcc_prep_free(&prep);
+  return status;
+}
+
 static int try_name(
   const LccImage *image,
   LccPrep *prep,
