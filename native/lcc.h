@@ -144,7 +144,7 @@ int lcc_api_debug_residuals_h_symbols(
   double h0, double h1, double h2,
   double h3, double h4, double h5,
   double h6, double h7, double h8,
-  int version, int N, int module_size
+  int version, int N, int module_size, int variant
 );
 
 void lcc_debug_reset(void);

@@ -85,13 +85,26 @@ async function main() {
     if (!Array.isArray(sample.homographyModuleFlat)) continue;
     const image = readImage(root, sample);
     const truth = truthFor(sample);
-    const debug = await debugResidualsForcedSymbolsWasm(
+    let debug = await debugResidualsForcedSymbolsWasm(
       image,
       sample.homographyModuleFlat,
       sample.version,
       sample.N,
       sample.moduleSize,
+      0,
     );
+    if (debug.meta?.layer !== truth.layer || debug.meta?.dataCount !== truth.dataCount) {
+      const alt = await debugResidualsForcedSymbolsWasm(
+        image,
+        sample.homographyModuleFlat,
+        sample.version,
+        sample.N,
+        sample.moduleSize,
+        1,
+      );
+      if (alt.meta?.layer === truth.layer && alt.meta?.dataCount === truth.dataCount) debug = alt;
+      else if ((alt.meta?.dataCount ?? 0) > (debug.meta?.dataCount ?? 0)) debug = alt;
+    }
     if (!debug.records.length) continue;
     let kept = 0;
     const sampleIndex = samples.length;
@@ -126,6 +139,11 @@ async function main() {
       dataCount: truth.dataCount,
       ecc: truth.ecc,
       status: debug.status,
+      cLayer: debug.meta?.layer ?? '',
+      cVersion: debug.meta?.version ?? 0,
+      cN: debug.meta?.N ?? 0,
+      cDataCount: debug.meta?.dataCount ?? 0,
+      cShapeSet: debug.meta?.shapeSet ?? 0,
       records: kept,
     });
     if ((i + 1) % 20 === 0) process.stderr.write(`\r${i + 1}/${manifest.samples.length}`);

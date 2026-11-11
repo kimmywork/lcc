@@ -139,6 +139,7 @@ def augment(
     srcq = np.array([[0, 0], [sw, 0], [sw, sh], [0, sh]], dtype=np.float64)
     H = _homography(srcq, quad)
     Hinv = np.linalg.inv(H)
+    Hinv = Hinv / Hinv[2, 2]
     coeffs = (
         Hinv[0, 0], Hinv[0, 1], Hinv[0, 2],
         Hinv[1, 0], Hinv[1, 1], Hinv[1, 2],

@@ -1374,6 +1374,15 @@ static int decode_found(
   build_calibrator(palette, &layout, image, found, &illum, &cal);
 
   const int D = layout.data_count;
+  if (meta) {
+    meta->version = found->version;
+    meta->N = layout.N;
+    meta->module_size = found->s;
+    meta->data_count = D;
+    meta->format_blocks = layout.blocks;
+    meta->shape_set = palette->shape_set > 0 ? palette->shape_set : 1;
+    strncpy(meta->layer, palette->name, sizeof(meta->layer) - 1);
+  }
   int *symbols = lcc_alloc((size_t)D * sizeof(int));
   if (!symbols) {
     lcc_layout_free(&layout);
