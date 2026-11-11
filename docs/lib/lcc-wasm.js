@@ -278,6 +278,29 @@ function packScan(frames) {
   return out;
 }
 
+export async function setWasmFeatures(features) {
+  const wasm = await loadInstance();
+  return wasm.lcc_api_set_features(features | 0);
+}
+
+export async function finderCentersWasm(image) {
+  const wasm = await loadInstance();
+  const ptr = writeBytes(wasm, image.data);
+  try {
+    wasm.lcc_api_finder(ptr, image.width, image.height);
+    const bytes = readLast(wasm);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const ok = view.getUint32(0, true) !== 0;
+    const centers = [];
+    for (let i = 0; i < 3; i++) {
+      centers.push([view.getFloat64(4 + i * 16, true), view.getFloat64(12 + i * 16, true)]);
+    }
+    return { ok, centers };
+  } finally {
+    wasm.free(ptr);
+  }
+}
+
 export async function scanFramesWasm(frames) {
   const wasm = await loadInstance();
   const packed = packScan(frames);

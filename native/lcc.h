@@ -81,6 +81,13 @@ enum {
 };
 
 enum {
+  LCC_FEATURE_FINDER = 1,
+  LCC_FEATURE_SR_BILINEAR = 2,
+  LCC_FEATURE_SR_CNN = 4,
+  LCC_FEATURE_SHAPE_ABS = 8
+};
+
+enum {
   LCC_CAL_THRESHOLD = 0,
   LCC_CAL_GRAY = 1,
   LCC_CAL_IDENTITY_CLEAN = 2,
@@ -130,6 +137,19 @@ int lcc_api_decode(const uint8_t *rgb, int width, int height, int mode);
 int lcc_api_scan(const uint8_t *input, int input_len);
 uint8_t *lcc_last(void);
 int lcc_last_len(void);
+
+int lcc_api_set_features(int features);
+int lcc_api_finder(const uint8_t *rgb, int width, int height);
+int lcc_api_debug_residuals(const uint8_t *rgb, int width, int height, int mode);
+
+void lcc_debug_reset(void);
+void lcc_debug_stop(void);
+int lcc_debug_count(void);
+int lcc_debug_get(int index, int *row, int *col, int *grid_n, int *shape, float *res);
+int lcc_model_get_features(void);
+void lcc_model_set_features(int features);
+void lcc_sr_forward(const float *x, float *out);
+void lcc_bilinear_resample(const float *src, int sw, int sh, float *dst, int dw, int dh);
 
 #ifdef __cplusplus
 }

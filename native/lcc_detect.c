@@ -650,3 +650,92 @@ int lcc_detect_perspective(const LccImage *image, const LccVariant *variant, Lcc
   *found = best;
   return 1;
 }
+
+/*
+ * Finder-network path. It receives three locator centers from a small CNN and
+ * searches versions by scoring the 1:2:1:2:1 finders plus the timing rows.
+ * This avoids the per-variant connected-component pass on hard frames.
+ */
+int lcc_detect_finder_net(
+  const LccImage *image,
+  const uint8_t *gray,
+  const LccVariant *variant,
+  LccFound *found
+) {
+  double centers[3][2];
+  if (!lcc_finder_centers(gray, image->width, image->height, centers)) return 0;
+
+  int tl = 0;
+  for (int i = 1; i < 3; i++) {
+    if (centers[i][0] + centers[i][1] < centers[tl][0] + centers[tl][1]) tl = i;
+  }
+  int tr = -1;
+  int bl = -1;
+  double best_tr = -INFINITY;
+  double best_bl = -INFINITY;
+  for (int i = 0; i < 3; i++) {
+    if (i == tl) continue;
+    const double trs = centers[i][0] - centers[i][1];
+    const double bls = centers[i][1] - centers[i][0];
+    if (trs > best_tr) {
+      best_tr = trs;
+      tr = i;
+    }
+    if (bls > best_bl) {
+      best_bl = bls;
+      bl = i;
+    }
+  }
+  if (tr < 0 || bl < 0 || tr == bl) return 0;
+
+  const double d_top = hypot(centers[tl][0] - centers[tr][0], centers[tl][1] - centers[tr][1]);
+  const double d_left = hypot(centers[tl][0] - centers[bl][0], centers[tl][1] - centers[bl][1]);
+  if (d_top < 20 || d_left < 20) return 0;
+
+  int best_ok = 0;
+  double best_total = -INFINITY;
+  LccFound best;
+  memset(&best, 0, sizeof(best));
+  for (int version = 1; version <= 100; version++) {
+    const int N = version_to_size(version);
+    const double src[4][2] = {
+      { 3.5, 3.5 },
+      { N - 3.5, 3.5 },
+      { 3.5, N - 3.5 },
+      { N - 3.5, N - 3.5 },
+    };
+    const double dst[4][2] = {
+      { centers[tl][0], centers[tl][1] },
+      { centers[tr][0], centers[tr][1] },
+      { centers[bl][0], centers[bl][1] },
+      { centers[tr][0] + centers[bl][0] - centers[tl][0], centers[tr][1] + centers[bl][1] - centers[tl][1] },
+    };
+    double H[9];
+    if (!compute_h(src, dst, H)) continue;
+    const double score_tl = finder_score_h(H, image, variant, 0, 0);
+    const double score_tr = finder_score_h(H, image, variant, 0, N - 7);
+    const double score_bl = finder_score_h(H, image, variant, N - 7, 0);
+    const double min_score = score_tl < score_tr
+      ? (score_tl < score_bl ? score_tl : score_bl)
+      : (score_tr < score_bl ? score_tr : score_bl);
+    if (min_score < 0.65) continue;
+    const double score_t = timing_score(H, image, variant, N);
+    const double total = min_score + 0.5 * score_t;
+    if (!best_ok || total > best_total) {
+      best_ok = 1;
+      best_total = total;
+      memset(&best, 0, sizeof(best));
+      best.version = version;
+      best.N = N;
+      best.s = ((d_top + d_left) / 2.0) / (double)(N - 7);
+      best.score = total;
+      best.has_h = 1;
+      best.axis = 0;
+      memcpy(best.H, H, sizeof(H));
+      best.threshold = lcc_threshold_at(variant, image->width / 2.0, image->height / 2.0);
+    }
+  }
+  if (!best_ok) return 0;
+  *found = best;
+  return 1;
+}

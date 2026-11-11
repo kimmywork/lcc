@@ -13,6 +13,7 @@
     "shape:examples": "node examples/shape-examples.js",
     "cli": "node src/cli.js",
     "build:wasm": "sh scripts/build-wasm.sh",
+    "build:wasm:model": "LCC_ENABLE_MODELS=1 sh scripts/build-wasm.sh",
     "build:web": "node scripts/build-web.js",
     "web": "node scripts/serve-web.js",
     "qr:examples": "python3 scripts/make-qr-examples.py"

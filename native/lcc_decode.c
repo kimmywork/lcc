@@ -817,8 +817,62 @@ static double ncc_vec(const double *res, const double *mask, int count) {
   return v < 0 ? -v : v;
 }
 
-static int match_shape(const int *grid, int grid_n, const double *planes, int stride, int sharpen, int background[3]) {
+static void resample_double(const double *src, int n, int dn, double *dst) {
+  const double scale = (double)n / (double)dn;
+  for (int y = 0; y < dn; y++) {
+    double fy = ((double)y + 0.5) * scale - 0.5;
+    if (fy < 0) fy = 0;
+    if (fy > n - 1) fy = n - 1;
+    const int y0 = (int)floor(fy);
+    const int y1 = y0 + 1 < n ? y0 + 1 : y0;
+    const double ty = fy - y0;
+    for (int x = 0; x < dn; x++) {
+      double fx = ((double)x + 0.5) * scale - 0.5;
+      if (fx < 0) fx = 0;
+      if (fx > n - 1) fx = n - 1;
+      const int x0 = (int)floor(fx);
+      const int x1 = x0 + 1 < n ? x0 + 1 : x0;
+      const double tx = fx - x0;
+      const double a = src[y0 * n + x0];
+      const double b = src[y0 * n + x1];
+      const double c = src[y1 * n + x0];
+      const double d = src[y1 * n + x1];
+      dst[y * dn + x] = a * (1 - tx) * (1 - ty) + b * tx * (1 - ty) + c * (1 - tx) * ty + d * tx * ty;
+    }
+  }
+}
+
+static void normalize_double(double *v, int n) {
+  double mean = 0;
+  for (int i = 0; i < n; i++) mean += v[i];
+  mean /= n;
+  double var = 0;
+  for (int i = 0; i < n; i++) {
+    const double d = v[i] - mean;
+    var += d * d;
+  }
+  const double std = sqrt(var / n);
+  if (std < 1e-6) {
+    for (int i = 0; i < n; i++) v[i] = 0;
+    return;
+  }
+  for (int i = 0; i < n; i++) v[i] = (v[i] - mean) / std;
+}
+
+static int match_shape(
+  const int *grid,
+  int grid_n,
+  const double *planes,
+  int stride,
+  int sharpen,
+  int background[3],
+  const double *planes_model,
+  int model_n,
+  int model_stride,
+  int model_mode
+) {
   const int count = grid_n * grid_n;
+  const int abs_score = (lcc_model_get_features() & LCC_FEATURE_SHAPE_ABS) != 0;
   background_majority(grid, count, background);
   int bg_rgb[3] = { background[0], background[1], background[2] };
   const double bg_l = lcc_luminance(bg_rgb);
@@ -827,16 +881,87 @@ static int match_shape(const int *grid, int grid_n, const double *planes, int st
     int rgb[3] = { grid[i * 3], grid[i * 3 + 1], grid[i * 3 + 2] };
     res[i] = lcc_luminance(rgb) - bg_l;
   }
+
+  if (planes_model && model_mode) {
+    // Training subtracts the module-border median, while the colour path uses
+    // a mode-based background. Use the border median here to match training.
+    double border[256];
+    int nb = 0;
+    for (int x = 0; x < grid_n; x++) {
+      border[nb++] = res[x];
+      if (grid_n > 1) border[nb++] = res[(grid_n - 1) * grid_n + x];
+    }
+    for (int y = 1; y + 1 < grid_n; y++) {
+      border[nb++] = res[y * grid_n];
+      border[nb++] = res[y * grid_n + grid_n - 1];
+    }
+    for (int i = 1; i < nb; i++) {
+      const double key = border[i];
+      int j = i - 1;
+      while (j >= 0 && border[j] > key) {
+        border[j + 1] = border[j];
+        j--;
+      }
+      border[j + 1] = key;
+    }
+    const double border_level = nb > 0 ? border[nb / 2] : 0;
+    double res_sr[256];
+    for (int i = 0; i < count; i++) res_sr[i] = res[i] - border_level;
+    double in16[256];
+    resample_double(res_sr, grid_n, 16, in16);
+    normalize_double(in16, 256);
+    double model_res[1024];
+    int n = 16;
+    if (model_mode == 2) {
+      float x[256];
+      float y[1024];
+      for (int i = 0; i < 256; i++) x[i] = (float)in16[i];
+      lcc_sr_forward(x, y);
+      for (int i = 0; i < 1024; i++) model_res[i] = y[i];
+      n = 32;
+      double peak = 0;
+      for (int i = 0; i < 1024; i++) {
+        const double a = fabs(model_res[i]);
+        if (a > peak) peak = a;
+      }
+      if (peak < 0.35) return 0;
+    } else {
+      for (int i = 0; i < 256; i++) model_res[i] = in16[i];
+    }
+    const int model_count = n * n;
+    int shape = 0;
+    double best = 0;
+    for (int s = 1; s < 8; s++) {
+      const double *base = planes_model + (size_t)(s - 1) * 9 * (size_t)model_stride;
+      double score = fabs(ncc_vec(model_res, base + 4 * (size_t)model_stride, model_count));
+      if (score < 0.72) {
+        for (int shift = 0; shift < 9; shift++) {
+          if (shift == 4) continue;
+          const double candidate = fabs(ncc_vec(model_res, base + (size_t)shift * (size_t)model_stride, model_count));
+          if (candidate > score) score = candidate;
+        }
+      }
+      if (score > best) {
+        best = score;
+        shape = s;
+      }
+    }
+    if (best < 0.32) shape = 0;
+    return shape;
+  }
+
   if (sharpen) sharpen_residual(res, grid_n);
   int shape = 0;
   double best = 0;
   for (int s = 1; s < 8; s++) {
     const double *base = planes + (size_t)(s - 1) * 9 * (size_t)stride;
     double score = ncc_vec(res, base + 4 * (size_t)stride, count);
+    if (abs_score && score < 0) score = -score;
     if (score < 0.72) {
       for (int shift = 0; shift < 9; shift++) {
         if (shift == 4) continue;
-        const double candidate = ncc_vec(res, base + (size_t)shift * (size_t)stride, count);
+        double candidate = ncc_vec(res, base + (size_t)shift * (size_t)stride, count);
+        if (abs_score && candidate < 0) candidate = -candidate;
         if (candidate > score) score = candidate;
       }
     }
@@ -1125,6 +1250,12 @@ static int decode_found(
   double *planes = NULL;
   uint8_t *band = NULL;
   int *order = NULL;
+  const int features = lcc_model_get_features();
+  const int model_mode = (features & LCC_FEATURE_SR_CNN) ? 2
+    : (features & LCC_FEATURE_SR_BILINEAR) ? 1 : 0;
+  int model_n = 0;
+  int model_stride = 0;
+  double *planes_model = NULL;
   if (patterns) {
     const int count = grid_n * grid_n;
     plane_stride = (count + 1) & ~1;
@@ -1156,6 +1287,47 @@ static int decode_found(
           }
         }
       }
+    }
+    if (model_mode) {
+      model_n = model_mode == 2 ? 32 : 16;
+      const int model_count = model_n * model_n;
+      model_stride = (model_count + 1) & ~1;
+      planes_model = lcc_alloc((size_t)7 * 9 * (size_t)model_stride * sizeof(double));
+      uint8_t *templ = lcc_alloc((size_t)model_n * model_n);
+      if (!planes_model || !templ) {
+        lcc_release(planes_model);
+        lcc_release(templ);
+        for (int s = 1; s < 8; s++) lcc_release(masks[s]);
+        lcc_release(grid);
+        lcc_release(planes);
+        lcc_release(band);
+        lcc_release(order);
+        lcc_release(symbols);
+        lcc_layout_free(&layout);
+        return LCC_ERR;
+      }
+      int line_m = (int)lcc_js_round(model_n / 8.0);
+      int inset_m = (int)lcc_js_round(model_n / 16.0);
+      if (line_m < 1) line_m = 1;
+      if (inset_m < 1) inset_m = 1;
+      for (int s = 1; s < 8; s++) {
+        shape_mask(s, model_n, line_m, inset_m, templ);
+        for (int dy = -1; dy <= 1; dy++) {
+          for (int dx = -1; dx <= 1; dx++) {
+            double *dst = planes_model +
+              (((size_t)(s - 1) * 9 + (size_t)((dy + 1) * 3 + (dx + 1))) * (size_t)model_stride);
+            for (int y = 0; y < model_n; y++) {
+              for (int x = 0; x < model_n; x++) {
+                const int tx = x + dx;
+                const int ty = y + dy;
+                dst[y * model_n + x] = tx >= 0 && ty >= 0 && tx < model_n && ty < model_n
+                  ? templ[ty * model_n + tx] : 0;
+              }
+            }
+          }
+        }
+      }
+      lcc_release(templ);
     }
     for (int i = 0; i < D; i++) order[i] = i;
     for (int a = 1; a < D; a++) {
@@ -1210,7 +1382,10 @@ static int decode_found(
       }
     }
     int majority[3];
-    const int shape = match_shape(grid, grid_n, planes, plane_stride, sharpen, majority);
+    const int shape = match_shape(
+      grid, grid_n, planes, plane_stride, sharpen, majority,
+      planes_model, model_n, model_stride, model_mode
+    );
     int background[3];
     if (shape == 0) {
       background[0] = majority[0];
@@ -1225,6 +1400,7 @@ static int decode_found(
   for (int s = 1; s < 8; s++) lcc_release(masks[s]);
   lcc_release(grid);
   lcc_release(planes);
+  lcc_release(planes_model);
   lcc_release(band);
   lcc_release(order);
 
@@ -1375,6 +1551,20 @@ static int detect_camera_frame(const LccImage *image, LccFound *found, int *vari
     if (ok) {
       if (variant_index) *variant_index = (int)i;
       break;
+    }
+  }
+  if (!ok && prep.gray && (lcc_model_get_features() & LCC_FEATURE_FINDER)) {
+    const int try_variants[] = { 3, 9 };
+    for (size_t k = 0; k < sizeof(try_variants) / sizeof(try_variants[0]); k++) {
+      const int vi = try_variants[k];
+      LccVariant variant;
+      if (!lcc_variant_build(&prep, PERSP_NAMES[vi], &variant)) continue;
+      ok = lcc_detect_finder_net(&view, prep.gray, &variant, found);
+      lcc_variant_free(&variant);
+      if (ok) {
+        if (variant_index) *variant_index = vi;
+        break;
+      }
     }
   }
   lcc_prep_free(&prep);

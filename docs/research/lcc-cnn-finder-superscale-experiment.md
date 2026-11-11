@@ -1,0 +1,179 @@
+# LCC 形状层超分与 finder 检测的小模型实验
+
+> **状态**：实验记录，2026-11-11。两个小模型都已训练并接进 C/WASM，**默认关闭**。
+> **结论先行**：不保留这一层。finder CNN 在真实照片上没有增加成功帧，单帧还要多花约 36–41 ms；超分 CNN 在模块级强退化集上只比双线性高约 5 个点，接进 C 后反而从 51.7% 掉到 13.3%，且每模块约 1.0 ms。默认 `lcc.wasm` 仍是 140 KB，模型代码只在 `LCC_ENABLE_MODELS=1` 时编入。
+
+---
+
+## 1. 实验设置
+
+数据全部由当前编码器合成，真实照片只做验证，不参与训练。
+
+| 数据集 | 数量 | 用途 |
+| --- | ---: | --- |
+| `training/corpus/clean` | 240 | 编码器直接渲染的干净 LCC，覆盖 L1/L2a/L3c/L1s/L2s/L3s/L3t |
+| `training/corpus/eval` | 240 | 透视、模糊、噪声、色偏、JPEG、摩尔纹；难度 0–1 |
+| `training/corpus/blur_shape` | 240 | 只保留形状层，轴对齐，加模糊/噪声/色偏/JPEG；用来把“形状解码”和“finder 检测”分开 |
+| `training/corpus/finder.npz` | 6400 + 800 | finder 中心热图训练/验证 |
+| `training/corpus/sr.npz` | 30000 + 3000 + 3000 | 模块级超分训练/普通验证/强退化验证 |
+| `photo/` | 13 | 真实手机照片；其中 4 张当前能解出 |
+
+指标：
+
+- **端到端识别率**：WASM 返回的 payload 必须和原始文本完全一致，CRC/RS 通过才算成功。
+- **finder 中心误差**：预测的三个定位中心与标签的贪心最近匹配距离。
+- **模块级形状准确率**：只比较 8 分类形状，不经过格式带、颜色分类和 RS。
+- **速度**：Node 里调用 `lcc_api_scan` / `lcc_api_decode` 的墙钟时间，包含 WASM 调用和内存拷贝。
+
+---
+
+## 2. Finder CNN
+
+### 2.1 模型
+
+- 输入：192×192 灰度，直接缩放到固定尺寸，不做 letterbox。
+- 结构：`conv3×3 s2` 8 → `conv3×3 s2` 16 → `conv3×3 s2` 32 → `conv3×3` 32 → `conv3×3` 24 → 双线性 2× → `conv1×1` 1。
+- 输出：48×48 的 finder 中心热图，stride 4。
+- 参数 22,097；约 30.6 MFLOP/帧。
+- 训练：6400 帧 + 800 验证，透视/模糊/噪声/色偏/JPEG/摩尔纹，12% 纯背景负样本。
+
+### 2.2 离线与 C 接入
+
+验证集上，三个中心都落在 9 px 内的帧占 **40.3%**，平均中心误差 8.3 px。这个指标不够好：LCC 的版本是由三个中心间距反推的，中心误差会直接变成 N 的误差。
+
+C 里的接法是“经典检测失败后再跑 CNN”，用 CNN 给出的三个中心搜索 1–100 版，找 finder + timing 得分最高的单应性。单独测 CNN 前向约 **36–41 ms/帧**（4032×3024 和 3472×4624 的真实照片）。
+
+| 数据 | 无 finder | 有 finder | 说明 |
+| --- | ---: | ---: | --- |
+| 合成 eval 240 帧 | 40/240 = 16.7% | 40/240 = 16.7% | 0 增益 |
+| 真实照片 13 张 | 4/13 | 4/13 | 0 增益 |
+| eval 平均耗时 | 52.7 ms | 64.5 ms | 失败帧多付 CNN 成本 |
+
+在 120 帧 eval 上单独比较中心：20 px 内三中心齐全的只有 10/120。CNN 在训练分布上能到 40%，但换到 eval 的透视/小模块组合后明显掉下来。真实照片里的 5055、5057–5059、224710/801/805/813 仍然解不开；这些帧里经典检测有时已经找到码，失败发生在格式带/颜色/RS，换 finder 不会改变这些符号。
+
+**判断**：finder CNN 没有找到“经典检测失败、但 CNN 能救回”的样本；它增加的时间比它减少的搜索多。不保留。
+
+---
+
+## 3. 形状层超分 CNN
+
+### 3.1 模型
+
+只针对 L1s/L2s/L3s/L3t 的 8 种线形态。
+
+- 输入：解码器当前的 16×16 归一化亮度残差。
+- 结构：`conv3×3` 16 → `conv3×3` 16 → `conv3×3` 16 → 双线性 2× → `conv3×3` 1，外层加一条双线性 skip。
+- 输出：32×32 的干净残差，再用 32×32 的 8 个形状模板做 NCC。
+- 参数 4,945；约 2.7 MFLOP/模块。
+- 损失：MSE + cosine + 下游 NCC 分类交叉熵 + blank 能量项。
+- 训练：30k 普通模块 + 3k 强退化模块（重复 8×）。强退化：模块 6–13 px、模糊 1.4–3.6 px、噪声 8–26、低对比度。
+
+### 3.2 模块级结果
+
+| 验证集 | 当前 C：原生分辨率、带符号 NCC | 原生分辨率 + 绝对值 NCC | 双线性放大到 16×16 + 绝对值 | SR CNN 到 32×32 |
+| --- | ---: | ---: | ---: | ---: |
+| 普通 eval 3000 模块 | 43.5% | 72.1% | **99.8%** | 99.4% |
+| 强退化 3000 模块 | 13.2% | 13.7% | 26.2% | **31.6%** |
+| 干净目标（上限） | — | — | — | 100% |
+
+两个现象：
+
+1. 在普通退化下，**双线性放大 + 绝对值 NCC** 已经到 99.8%，CNN 没有空间。
+2. 在刻意做坏的强退化下，CNN 比双线性高约 5.4 个点，但绝对值仍然只有三成，离“能救 RS”很远。
+
+绝对值 NCC 本身是另一个问题：当前 C 的 `match_shape` 用带符号相关，背景比前景亮时整块模板会反号。它很便宜，但端到端没有看到收益（见下），说明当前失败帧里形状匹配不是唯一瓶颈。
+
+### 3.3 接进 C 之后
+
+C 里把 `match_shape` 的残差先减模块边框中位数，再重采样到 16×16、归一化，然后跑 CNN 到 32×32，用 32×32 模板做 NCC。C 的卷积实现和 PyTorch 输出对齐到 `2e-6`。
+
+在 `blur_shape` 前 60 帧上：
+
+| 路径 | 成功 | 平均耗时 | 中位耗时 |
+| --- | ---: | ---: | ---: |
+| 当前 C | 31/60 = 51.7% | 280 ms | 176 ms |
+| 双线性 + 绝对值 | 31/60 = 51.7% | 275 ms | 163 ms |
+| SR CNN | 8/60 = 13.3% | 5.8 s | 3.4 s |
+
+C 端失败的原因不是卷积算错，而是**输入分布对不上**：训练数据是独立渲染的模块残差，C 的残差来自整帧透视采样、2×2 平均、光照归一化和 `background_majority`，背景估计和采样纹理都和训练集不同。模型对这类偏移很敏感；双线性模板匹配反而稳。
+
+速度也不够：本机原生标量 C 每个模块 **1.02 ms**，一帧几百个模块就是几百毫秒；WASM 更慢。即使只对低分模块触发，也要先证明准确率能补回来。
+
+**判断**：不保留 SR CNN。当前默认路径不编译它。
+
+---
+
+## 4. 真实照片
+
+13 张照片，当前 WASM 解出 4 张：
+
+| 文件 | 层 | 备注 |
+| --- | --- | --- |
+| `IMG_5054` | L1s | 形状层，能解 |
+| `IMG_5056` | L3s | 形状层，能解 |
+| `IMG_20261110_224829` | L1 | 能解 |
+| `IMG_20261110_224840` | L3c | 能解 |
+
+`IMG_5053` 是 JS 能解、WASM 当前解不开的边界样本；`IMG_5055`、`IMG_5057`–`5059`、`224710/801/805/813` 仍然失败。
+
+打开 finder 或双线性超分后，成功数仍然是 **4/13**，没有多解出一张。finder 单独前向约 36–41 ms/帧；这些帧的失败点还是在格式/颜色/RS，不在定位。
+
+---
+
+## 5. 决策
+
+**默认不启用 finder 和超分 CNN。**
+
+- `lcc.wasm` 默认仍是 140 KB，和实验前一致。
+- 模型代码、权重和 C 算子保留在仓库里，只在 `LCC_ENABLE_MODELS=1` 时编译：
+  ```bash
+  npm run build:wasm:model
+  ```
+- 运行时用 `setWasmFeatures()` 打开：
+  - `1`：finder CNN 兜底
+  - `2`：双线性放大到 16×16 + 绝对值 NCC
+  - `4`：SR CNN
+  - `8`：只把形状 NCC 改成绝对值
+  - 0（默认）：原路径
+
+如果要继续这条线，优先级应该是：
+
+1. **先在 C 里导出训练输入**，用真实解码残差训练，而不是独立渲染的模块。当前 SR 的主要问题是分布偏移。
+2. **做模块级形状分类器**，不一定输出 32×32 残差。分类器可以直接用整块证据，参数和算力都比超分低。
+3. **只在低分/低 margin 模块触发**，不要对每个模块都跑 CNN。
+4. **量化 + SIMD**。当前标量 float 每模块 1 ms，量化到 int8 和复用卷积窗口才有机会进 10 ms 量级。
+5. **finder 只做经典失败的兜底**，并且用更小的输入/更少的层；当前 192×192、30 MFLOP 的网在干净路径上不划算。
+
+---
+
+## 6. 复现
+
+```bash
+# 1. 生成干净语料和评测集
+node scripts/gen-lcc-corpus.mjs --out training/corpus/clean --count 240 --seed 11
+uv run python training/make_eval.py --count 240
+uv run python training/make_blur_eval.py --count 240
+
+# 2. 训练
+uv run python training/make_finder_dataset.py --count 6400 --val 800
+uv run python training/train_finder.py --epochs 48 --width 32 --out training/models/finder32.pt
+uv run python training/make_sr_dataset.py --count 30000 --eval 3000 --hard 3000
+uv run python training/train_sr.py --epochs 24 --width 16
+
+# 3. 导出 C 权重并编译模型版 WASM
+uv run python training/export_weights.py
+npm run build:wasm:model
+
+# 4. 对比
+node scripts/bench-wasm.mjs --manifest training/corpus/eval/manifest.json --mode scan --features 0
+node scripts/bench-wasm.mjs --manifest training/corpus/eval/manifest.json --mode scan --features 1
+node scripts/bench-wasm.mjs --manifest training/corpus/blur_shape/manifest.json --mode decode --detector axis --features 0
+node scripts/bench-wasm.mjs --manifest training/corpus/blur_shape/manifest.json --mode decode --detector axis --features 4
+node scripts/bench-real.mjs --features 0
+node scripts/bench-real.mjs --features 1
+
+# 5. 回到默认小 WASM
+npm run build:wasm
+```
+
+`npm test` 在默认路径上仍为 21/21 通过。

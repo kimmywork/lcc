@@ -1,10 +1,15 @@
-#include "lcc.h"
+#include "lcc_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 static uint8_t *g_last = NULL;
 static int g_last_len = 0;
+
+int lcc_api_set_features(int features) {
+  lcc_model_set_features(features);
+  return lcc_model_get_features();
+}
 
 uint8_t *lcc_last(void) { return g_last; }
 int lcc_last_len(void) { return g_last_len; }
@@ -38,6 +43,33 @@ static void wr_u32(uint8_t *p, uint32_t v) {
 
 static void wr_f64(uint8_t *p, double v) {
   memcpy(p, &v, 8);
+}
+
+int lcc_api_finder(const uint8_t *rgb, int width, int height) {
+  if (!rgb || width <= 0 || height <= 0) return LCC_BAD_INPUT;
+  uint8_t *gray = lcc_alloc((size_t)width * (size_t)height);
+  if (!gray) return LCC_ERR;
+  for (int i = 0; i < width * height; i++) {
+    const int r = rgb[i * 3];
+    const int g = rgb[i * 3 + 1];
+    const int b = rgb[i * 3 + 2];
+    int v = (int)lcc_js_round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+    if (v < 0) v = 0;
+    if (v > 255) v = 255;
+    gray[i] = (uint8_t)v;
+  }
+  double centers[3][2];
+  const int ok = lcc_finder_centers(gray, width, height, centers);
+  lcc_release(gray);
+  uint8_t *out = lcc_alloc(4 + 6 * 8);
+  if (!out) return LCC_ERR;
+  wr_u32(out, (uint32_t)(ok ? 1 : 0));
+  for (int i = 0; i < 3; i++) {
+    wr_f64(out + 4 + i * 16, centers[i][0]);
+    wr_f64(out + 4 + i * 16 + 8, centers[i][1]);
+  }
+  set_last(out, 4 + 6 * 8);
+  return ok ? LCC_OK : LCC_ERR;
 }
 
 int lcc_api_stack(const uint8_t *input, int input_len) {
