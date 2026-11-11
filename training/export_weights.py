@@ -25,6 +25,7 @@ def main() -> None:
     ap.add_argument("--sr", default="training/models/sr.pt")
     ap.add_argument("--finder", default="training/models/finder32.pt")
     ap.add_argument("--shape", default="training/models/shape_cls8.pt")
+    ap.add_argument("--cheap", default="training/models/cheap_shape.pt")
     ap.add_argument("--out", default="native/model_weights.h")
     args = ap.parse_args()
 
@@ -80,6 +81,25 @@ def main() -> None:
         ("LCC_SHAPE_FC_W", "fc.weight"), ("LCC_SHAPE_FC_B", "fc.bias"),
     ]:
         emit(name, sc["state_dict"][key].detach().cpu().numpy(), lines)
+
+    cc = torch.load(args.cheap, map_location="cpu", weights_only=False)
+    w1 = cc["state_dict"]["fc1.weight"].detach().cpu().numpy().astype(np.float32)
+    b1 = cc["state_dict"]["fc1.bias"].detach().cpu().numpy().astype(np.float32)
+    mean = np.asarray(cc["mean"], dtype=np.float32)
+    scale = np.asarray(cc["scale"], dtype=np.float32)
+    w1 = w1 / scale[None, :]
+    b1 = b1 - (w1 * mean[None, :]).sum(axis=1)
+    w2 = cc["state_dict"]["fc2.weight"].detach().cpu().numpy().astype(np.float32)
+    b2 = cc["state_dict"]["fc2.bias"].detach().cpu().numpy().astype(np.float32)
+    lines += [
+        f"#define LCC_CHEAP_IN {int(cc['in_features'])}",
+        f"#define LCC_CHEAP_HIDDEN {int(cc['hidden'])}",
+        "",
+    ]
+    emit("LCC_CHEAP_W1", w1, lines)
+    emit("LCC_CHEAP_B1", b1, lines)
+    emit("LCC_CHEAP_W2", w2, lines)
+    emit("LCC_CHEAP_B2", b2, lines)
 
     lines.append("#endif")
     out = Path(args.out)

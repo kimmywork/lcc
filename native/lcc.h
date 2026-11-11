@@ -85,7 +85,8 @@ enum {
   LCC_FEATURE_SR_BILINEAR = 2,
   LCC_FEATURE_SR_CNN = 4,
   LCC_FEATURE_SHAPE_ABS = 8,
-  LCC_FEATURE_SHAPE_CNN = 16
+  LCC_FEATURE_SHAPE_CNN = 16,
+  LCC_FEATURE_SHAPE_MLP = 32
 };
 
 enum {
@@ -151,6 +152,7 @@ int lcc_model_get_features(void);
 void lcc_model_set_features(int features);
 void lcc_sr_forward(const float *x, float *out);
 void lcc_shape_forward(const float *x, float *logits);
+void lcc_cheap_shape_forward(const float *x, float *logits);
 void lcc_bilinear_resample(const float *src, int sw, int sh, float *dst, int dw, int dh);
 
 #ifdef __cplusplus

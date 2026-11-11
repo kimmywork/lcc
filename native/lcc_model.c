@@ -19,6 +19,10 @@ void lcc_shape_forward(const float *x, float *logits) {
   (void)x;
   for (int i = 0; i < 8; i++) logits[i] = 0;
 }
+void lcc_cheap_shape_forward(const float *x, float *logits) {
+  (void)x;
+  for (int i = 0; i < 8; i++) logits[i] = 0;
+}
 int lcc_finder_centers(const uint8_t *gray, int width, int height, double out[3][2]) {
   (void)gray; (void)width; (void)height; (void)out;
   return 0;
@@ -251,6 +255,62 @@ void lcc_shape_forward(const float *x, float *logits) {
   for (int o = 0; o < 8; o++) {
     double sum = LCC_SHAPE_FC_B[o];
     for (int i = 0; i < 2 * W; i++) sum += (double)LCC_SHAPE_FC_W[o * 2 * W + i] * feat[i];
+    logits[o] = (float)sum;
+  }
+}
+
+/*
+ * Cheap shape classifier: absolute 16x16 residual + row/column/diagonal
+ * projections + four radial band energies -> 324 -> 64 -> 8 MLP.
+ */
+void lcc_cheap_shape_forward(const float *x, float *logits) {
+  enum { G = 16, IN = LCC_CHEAP_IN, H = LCC_CHEAP_HIDDEN };
+  float a[G * G];
+  float feat[IN];
+  for (int i = 0; i < G * G; i++) a[i] = fabsf(x[i]);
+  for (int i = 0; i < 256; i++) feat[i] = a[i];
+  for (int y = 0; y < G; y++) {
+    double rs = 0;
+    for (int x2 = 0; x2 < G; x2++) rs += a[y * G + x2];
+    feat[256 + y] = (float)rs;
+  }
+  for (int x2 = 0; x2 < G; x2++) {
+    double cs = 0;
+    for (int y = 0; y < G; y++) cs += a[y * G + x2];
+    feat[272 + x2] = (float)cs;
+  }
+  double diag[31] = { 0 };
+  double anti[31] = { 0 };
+  double bands[4] = { 0 };
+  for (int y = 0; y < G; y++) {
+    for (int x2 = 0; x2 < G; x2++) {
+      const double v = a[y * G + x2];
+      diag[y - x2 + 15] += v;
+      anti[y + x2] += v;
+      const double dy = y - 7.5;
+      const double dx = x2 - 7.5;
+      const double r2 = dy * dy + dx * dx;
+      if (r2 < 9) bands[0] += v * v;
+      else if (r2 < 36) bands[1] += v * v;
+      else if (r2 < 81) bands[2] += v * v;
+      else if (r2 < 144) bands[3] += v * v;
+    }
+  }
+  for (int i = 0; i < 16; i++) {
+    feat[288 + i] = (float)diag[i * 2];
+    feat[304 + i] = (float)anti[i * 2];
+  }
+  for (int i = 0; i < 4; i++) feat[320 + i] = (float)bands[i];
+
+  float hidden[H];
+  for (int h = 0; h < H; h++) {
+    double sum = LCC_CHEAP_B1[h];
+    for (int i = 0; i < IN; i++) sum += (double)LCC_CHEAP_W1[h * IN + i] * feat[i];
+    hidden[h] = sum > 0 ? (float)sum : 0;
+  }
+  for (int o = 0; o < 8; o++) {
+    double sum = LCC_CHEAP_B2[o];
+    for (int h = 0; h < H; h++) sum += (double)LCC_CHEAP_W2[o * H + h] * hidden[h];
     logits[o] = (float)sum;
   }
 }
