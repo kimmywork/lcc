@@ -302,6 +302,26 @@ function parseDebugRecords(bytes) {
   return records;
 }
 
+function parseDebugRecordsSymbols(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const count = view.getUint32(0, true);
+  const records = [];
+  for (let i = 0; i < count; i++) {
+    const base = 4 + i * (20 + 256 * 4);
+    const res = new Float32Array(256);
+    for (let k = 0; k < 256; k++) res[k] = view.getFloat32(base + 20 + k * 4, true);
+    records.push({
+      row: view.getInt32(base, true),
+      col: view.getInt32(base + 4, true),
+      gridN: view.getInt32(base + 8, true),
+      shape: view.getInt32(base + 12, true),
+      symbol: view.getInt32(base + 16, true),
+      res,
+    });
+  }
+  return records;
+}
+
 export async function debugResidualsWasm(image, options = {}) {
   const wasm = await loadInstance();
   const mode = options.detector === 'axis' ? 1 : options.detector === 'perspective' ? 2 : 0;
@@ -329,6 +349,26 @@ export async function debugResidualsForcedWasm(image, homography, version, N, mo
       version, N, moduleSize,
     );
     return { status, records: parseDebugRecords(readLast(wasm)) };
+  } finally {
+    wasm.free(ptr);
+  }
+}
+
+export async function debugResidualsForcedSymbolsWasm(image, homography, version, N, moduleSize) {
+  if (!Array.isArray(homography) || homography.length !== 9) {
+    throw new Error('debugResidualsForcedSymbolsWasm: homography must be an array of 9 numbers');
+  }
+  const wasm = await loadInstance();
+  const ptr = writeBytes(wasm, image.data);
+  try {
+    const status = wasm.lcc_api_debug_residuals_h_symbols(
+      ptr, image.width, image.height,
+      homography[0], homography[1], homography[2],
+      homography[3], homography[4], homography[5],
+      homography[6], homography[7], homography[8],
+      version, N, moduleSize,
+    );
+    return { status, records: parseDebugRecordsSymbols(readLast(wasm)) };
   } finally {
     wasm.free(ptr);
   }

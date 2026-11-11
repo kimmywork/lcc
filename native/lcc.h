@@ -150,11 +150,19 @@ int lcc_api_debug_residuals_h(
   double h6, double h7, double h8,
   int version, int N, int module_size
 );
+int lcc_api_debug_residuals_h_symbols(
+  const uint8_t *rgb, int width, int height,
+  double h0, double h1, double h2,
+  double h3, double h4, double h5,
+  double h6, double h7, double h8,
+  int version, int N, int module_size
+);
 
 void lcc_debug_reset(void);
 void lcc_debug_stop(void);
 int lcc_debug_count(void);
 int lcc_debug_get(int index, int *row, int *col, int *grid_n, int *shape, float *res);
+int lcc_debug_get_symbol(int index);
 int lcc_model_get_features(void);
 void lcc_model_set_features(int features);
 void lcc_sr_forward(const float *x, float *out);
