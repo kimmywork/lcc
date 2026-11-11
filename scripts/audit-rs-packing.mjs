@@ -14,7 +14,7 @@ import { makeLayout } from '../src/layout.js';
 import { generatePalette } from '../src/palettes.js';
 import { computeRSBlocks } from '../src/ecc/rs.js';
 
-const LAYERS_TO_CHECK = ['L1', 'L2a', 'L3c', 'L3s', 'L3t', 'L3u', 'L4eS', 'L4fS'];
+const LAYERS_TO_CHECK = ['L1', 'L2a', 'L2b', 'L3b', 'L3c', 'L3d', 'L3s', 'L3t', 'L3u', 'L4eS', 'L4fS'];
 const VERSIONS = [4, 10, 20];
 
 const rows = [];
