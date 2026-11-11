@@ -47,6 +47,7 @@ if command -v emcc >/dev/null 2>&1 || [ -x "$HOME/emsdk/upstream/emscripten/emcc
     -Wl,--export=lcc_api_scan \
     -Wl,--export=lcc_api_set_features \
     -Wl,--export=lcc_api_finder \
+    -Wl,--export=lcc_api_debug_residuals \
     -Wl,--export=lcc_last \
     -Wl,--export=lcc_last_len \
     -Wl,--export=malloc \
@@ -64,6 +65,7 @@ else
     -Wl,--export=lcc_api_scan \
     -Wl,--export=lcc_api_set_features \
     -Wl,--export=lcc_api_finder \
+    -Wl,--export=lcc_api_debug_residuals \
     -Wl,--export=lcc_last \
     -Wl,--export=lcc_last_len \
     -Wl,--export=malloc \

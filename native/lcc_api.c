@@ -45,6 +45,10 @@ static void wr_f64(uint8_t *p, double v) {
   memcpy(p, &v, 8);
 }
 
+static void wr_f32(uint8_t *p, float v) {
+  memcpy(p, &v, 4);
+}
+
 int lcc_api_finder(const uint8_t *rgb, int width, int height) {
   if (!rgb || width <= 0 || height <= 0) return LCC_BAD_INPUT;
   uint8_t *gray = lcc_alloc((size_t)width * (size_t)height);
@@ -70,6 +74,37 @@ int lcc_api_finder(const uint8_t *rgb, int width, int height) {
   }
   set_last(out, 4 + 6 * 8);
   return ok ? LCC_OK : LCC_ERR;
+}
+
+int lcc_api_debug_residuals(const uint8_t *rgb, int width, int height, int mode) {
+  if (!rgb || width <= 0 || height <= 0) return LCC_BAD_INPUT;
+  LccImage image = { width, height, rgb };
+  uint8_t *payload = NULL;
+  int payload_len = 0;
+  LccDecodeMeta meta;
+  memset(&meta, 0, sizeof(meta));
+  lcc_debug_reset();
+  const int status = lcc_decode_image(&image, mode, &payload, &payload_len, &meta);
+  lcc_debug_stop();
+  lcc_release(payload);
+  const int count = lcc_debug_count();
+  const int record = 16 + 256 * 4;
+  uint8_t *out = lcc_alloc((size_t)4 + (size_t)count * (size_t)record);
+  if (!out) return LCC_ERR;
+  wr_u32(out, (uint32_t)count);
+  float res[256];
+  for (int i = 0; i < count; i++) {
+    int row = 0, col = 0, grid_n = 0, shape = -1;
+    lcc_debug_get(i, &row, &col, &grid_n, &shape, res);
+    uint8_t *p = out + 4 + (size_t)i * (size_t)record;
+    wr_u32(p + 0, (uint32_t)row);
+    wr_u32(p + 4, (uint32_t)col);
+    wr_u32(p + 8, (uint32_t)grid_n);
+    wr_u32(p + 12, (uint32_t)shape);
+    for (int k = 0; k < 256; k++) wr_f32(p + 16 + k * 4, res[k]);
+  }
+  set_last(out, 4 + count * record);
+  return status;
 }
 
 int lcc_api_stack(const uint8_t *input, int input_len) {

@@ -24,6 +24,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sr", default="training/models/sr.pt")
     ap.add_argument("--finder", default="training/models/finder32.pt")
+    ap.add_argument("--shape", default="training/models/shape_cls8.pt")
     ap.add_argument("--out", default="native/model_weights.h")
     args = ap.parse_args()
 
@@ -65,6 +66,20 @@ def main() -> None:
         ("LCC_FINDER_C6_W", "c6.weight"), ("LCC_FINDER_C6_B", "c6.bias"),
     ]:
         emit(name, fd["state_dict"][key].detach().cpu().numpy(), lines)
+
+    sc = torch.load(args.shape, map_location="cpu", weights_only=False)
+    lines += [
+        f"#define LCC_SHAPE_WIDTH {int(sc['width'])}",
+        f"#define LCC_SHAPE_GRID {int(sc['grid'])}",
+        "",
+    ]
+    for name, key in [
+        ("LCC_SHAPE_C1_W", "c1.weight"), ("LCC_SHAPE_C1_B", "c1.bias"),
+        ("LCC_SHAPE_C2_W", "c2.weight"), ("LCC_SHAPE_C2_B", "c2.bias"),
+        ("LCC_SHAPE_C3_W", "c3.weight"), ("LCC_SHAPE_C3_B", "c3.bias"),
+        ("LCC_SHAPE_FC_W", "fc.weight"), ("LCC_SHAPE_FC_B", "fc.bias"),
+    ]:
+        emit(name, sc["state_dict"][key].detach().cpu().numpy(), lines)
 
     lines.append("#endif")
     out = Path(args.out)

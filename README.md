@@ -214,7 +214,7 @@ Web 编码面板的“高级设置”里可以直接调这些参数；生成后�
 
 - [LCC vs Cimbar：差距、形状维度与增强路线](docs/research/cimbar-vs-lcc-and-shape.md)：Cimbar 对比、形状 + 颜色符号设计草案、验证计划与风险。形状维度已按“线形态”方案实现；报告保留为研究记录。
 - [微信二维码模型与 WASM 速度](docs/research/wechat-qr-models-and-wasm-speed.md)：检测网和超分网各自替换哪一段、能不能减 LCC 的前置，以及扫描重复解码为什么比模型更值得先做。研究记录，尚未训练或接入。
-- [LCC 形状层超分与 finder 检测的小模型实验](docs/research/lcc-cnn-finder-superscale-experiment.md)：用编码器合成数据训练 finder 热图网和 8 形态超分网，手写 C 算子接进 WASM，并和不开模型的路径比识别率与速度。结论是默认不启用；模型代码保留在 `LCC_ENABLE_MODELS=1` 后面。
+- [LCC 形状层超分与 finder 检测的小模型实验](docs/research/lcc-cnn-finder-superscale-experiment.md)：用编码器合成数据训练 finder 热图网和 8 形态超分网，手写 C 算子接进 WASM。finder 和超分默认不启用；换成 C 实际残差训练的形状分类器有增益（`blur_shape` 44.6% → 57.5%，真实照片 4/13 → 5/13），作为可选层 `16` 保留。
 
 ## Web 版 / GitHub Pages
 

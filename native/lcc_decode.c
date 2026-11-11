@@ -842,6 +842,74 @@ static void resample_double(const double *src, int n, int dn, double *dst) {
   }
 }
 
+static void normalize_double(double *v, int n);
+
+#define LCC_DEBUG_MAX 4096
+static int g_dbg_capture = 0;
+static int g_dbg_count = 0;
+static int *g_dbg_row = NULL;
+static int *g_dbg_col = NULL;
+static int *g_dbg_grid = NULL;
+static int *g_dbg_shape = NULL;
+static float *g_dbg_res = NULL;
+
+void lcc_debug_reset(void) {
+  if (!g_dbg_res) {
+    g_dbg_row = lcc_alloc((size_t)LCC_DEBUG_MAX * sizeof(int));
+    g_dbg_col = lcc_alloc((size_t)LCC_DEBUG_MAX * sizeof(int));
+    g_dbg_grid = lcc_alloc((size_t)LCC_DEBUG_MAX * sizeof(int));
+    g_dbg_shape = lcc_alloc((size_t)LCC_DEBUG_MAX * sizeof(int));
+    g_dbg_res = lcc_alloc((size_t)LCC_DEBUG_MAX * 256 * sizeof(float));
+  }
+  g_dbg_count = 0;
+  g_dbg_capture = g_dbg_res && g_dbg_row && g_dbg_col && g_dbg_grid && g_dbg_shape;
+}
+
+void lcc_debug_stop(void) {
+  g_dbg_capture = 0;
+}
+
+int lcc_debug_count(void) {
+  return g_dbg_count;
+}
+
+int lcc_debug_get(int index, int *row, int *col, int *grid_n, int *shape, float *res) {
+  if (index < 0 || index >= g_dbg_count) return 0;
+  if (row) *row = g_dbg_row[index];
+  if (col) *col = g_dbg_col[index];
+  if (grid_n) *grid_n = g_dbg_grid[index];
+  if (shape) *shape = g_dbg_shape[index];
+  if (res) memcpy(res, g_dbg_res + (size_t)index * 256, 256 * sizeof(float));
+  return 1;
+}
+
+static void make_model_input(const double *res, int grid_n, double *in16) {
+  double border[256];
+  int nb = 0;
+  for (int x = 0; x < grid_n; x++) {
+    border[nb++] = res[x];
+    if (grid_n > 1) border[nb++] = res[(grid_n - 1) * grid_n + x];
+  }
+  for (int y = 1; y + 1 < grid_n; y++) {
+    border[nb++] = res[y * grid_n];
+    border[nb++] = res[y * grid_n + grid_n - 1];
+  }
+  for (int i = 1; i < nb; i++) {
+    const double key = border[i];
+    int j = i - 1;
+    while (j >= 0 && border[j] > key) {
+      border[j + 1] = border[j];
+      j--;
+    }
+    border[j + 1] = key;
+  }
+  const double border_level = nb > 0 ? border[nb / 2] : 0;
+  double res_sr[256];
+  for (int i = 0; i < grid_n * grid_n; i++) res_sr[i] = res[i] - border_level;
+  resample_double(res_sr, grid_n, 16, in16);
+  normalize_double(in16, 256);
+}
+
 static void normalize_double(double *v, int n) {
   double mean = 0;
   for (int i = 0; i < n; i++) mean += v[i];
@@ -869,10 +937,14 @@ static int match_shape(
   const double *planes_model,
   int model_n,
   int model_stride,
-  int model_mode
+  int model_mode,
+  int module_row,
+  int module_col
 ) {
   const int count = grid_n * grid_n;
-  const int abs_score = (lcc_model_get_features() & LCC_FEATURE_SHAPE_ABS) != 0;
+  const int features = lcc_model_get_features();
+  const int abs_score = (features & LCC_FEATURE_SHAPE_ABS) != 0;
+  const int shape_cnn = (features & LCC_FEATURE_SHAPE_CNN) != 0;
   background_majority(grid, count, background);
   int bg_rgb[3] = { background[0], background[1], background[2] };
   const double bg_l = lcc_luminance(bg_rgb);
@@ -882,34 +954,56 @@ static int match_shape(
     res[i] = lcc_luminance(rgb) - bg_l;
   }
 
-  if (planes_model && model_mode) {
-    // Training subtracts the module-border median, while the colour path uses
-    // a mode-based background. Use the border median here to match training.
-    double border[256];
-    int nb = 0;
-    for (int x = 0; x < grid_n; x++) {
-      border[nb++] = res[x];
-      if (grid_n > 1) border[nb++] = res[(grid_n - 1) * grid_n + x];
-    }
-    for (int y = 1; y + 1 < grid_n; y++) {
-      border[nb++] = res[y * grid_n];
-      border[nb++] = res[y * grid_n + grid_n - 1];
-    }
-    for (int i = 1; i < nb; i++) {
-      const double key = border[i];
-      int j = i - 1;
-      while (j >= 0 && border[j] > key) {
-        border[j + 1] = border[j];
-        j--;
+  double in16[256];
+  if ((planes_model && model_mode) || shape_cnn || g_dbg_capture) make_model_input(res, grid_n, in16);
+
+  int dbg_slot = -1;
+  if (g_dbg_capture && g_dbg_count < LCC_DEBUG_MAX) {
+    dbg_slot = g_dbg_count++;
+    g_dbg_row[dbg_slot] = module_row;
+    g_dbg_col[dbg_slot] = module_col;
+    g_dbg_grid[dbg_slot] = grid_n;
+    g_dbg_shape[dbg_slot] = -1;
+    for (int i = 0; i < 256; i++) g_dbg_res[(size_t)dbg_slot * 256 + i] = (float)in16[i];
+  }
+
+  if (shape_cnn) {
+    // Cheap 16x16 template gate: skip the network when the correlation is
+    // strong and unambiguous.
+    if (planes_model) {
+      int cheap = 0;
+      double b1 = 0;
+      double b2 = 0;
+      for (int s = 1; s < 8; s++) {
+        const double *base = planes_model + (size_t)(s - 1) * 9 * (size_t)model_stride;
+        const double score = fabs(ncc_vec(in16, base + 4 * (size_t)model_stride, 256));
+        if (score > b1) {
+          b2 = b1;
+          b1 = score;
+          cheap = s;
+        } else if (score > b2) {
+          b2 = score;
+        }
       }
-      border[j + 1] = key;
+      if (b1 < 0.32) cheap = 0;
+      if (b1 >= 0.55 && b1 - b2 >= 0.10) {
+        if (dbg_slot >= 0) g_dbg_shape[dbg_slot] = cheap;
+        return cheap;
+      }
     }
-    const double border_level = nb > 0 ? border[nb / 2] : 0;
-    double res_sr[256];
-    for (int i = 0; i < count; i++) res_sr[i] = res[i] - border_level;
-    double in16[256];
-    resample_double(res_sr, grid_n, 16, in16);
-    normalize_double(in16, 256);
+    float x[256];
+    float logits[8];
+    for (int i = 0; i < 256; i++) x[i] = (float)in16[i];
+    lcc_shape_forward(x, logits);
+    int shape = 0;
+    for (int k = 1; k < 8; k++) {
+      if (logits[k] > logits[shape]) shape = k;
+    }
+    if (dbg_slot >= 0) g_dbg_shape[dbg_slot] = shape;
+    return shape;
+  }
+
+  if (planes_model && model_mode) {
     double model_res[1024];
     int n = 16;
     if (model_mode == 2) {
@@ -924,7 +1018,10 @@ static int match_shape(
         const double a = fabs(model_res[i]);
         if (a > peak) peak = a;
       }
-      if (peak < 0.35) return 0;
+      if (peak < 0.35) {
+        if (dbg_slot >= 0) g_dbg_shape[dbg_slot] = 0;
+        return 0;
+      }
     } else {
       for (int i = 0; i < 256; i++) model_res[i] = in16[i];
     }
@@ -947,6 +1044,7 @@ static int match_shape(
       }
     }
     if (best < 0.32) shape = 0;
+    if (dbg_slot >= 0) g_dbg_shape[dbg_slot] = shape;
     return shape;
   }
 
@@ -971,6 +1069,7 @@ static int match_shape(
     }
   }
   if (best < 0.32) shape = 0;
+  if (dbg_slot >= 0) g_dbg_shape[dbg_slot] = shape;
   return shape;
 }
 
@@ -1288,8 +1387,8 @@ static int decode_found(
         }
       }
     }
-    if (model_mode) {
-      model_n = model_mode == 2 ? 32 : 16;
+    if (model_mode || (features & LCC_FEATURE_SHAPE_CNN)) {
+      model_n = (model_mode == 2 && !(features & LCC_FEATURE_SHAPE_CNN)) ? 32 : 16;
       const int model_count = model_n * model_n;
       model_stride = (model_count + 1) & ~1;
       planes_model = lcc_alloc((size_t)7 * 9 * (size_t)model_stride * sizeof(double));
@@ -1384,7 +1483,7 @@ static int decode_found(
     int majority[3];
     const int shape = match_shape(
       grid, grid_n, planes, plane_stride, sharpen, majority,
-      planes_model, model_n, model_stride, model_mode
+      planes_model, model_n, model_stride, model_mode, row, col
     );
     int background[3];
     if (shape == 0) {
@@ -1479,6 +1578,7 @@ static int try_name(
   int *payload_len,
   LccDecodeMeta *meta
 ) {
+  if (g_dbg_capture) g_dbg_count = 0;
   LccVariant variant;
   if (!lcc_variant_build(prep, name, &variant)) return LCC_ERR;
   LccFound found;

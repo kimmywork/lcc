@@ -1,7 +1,7 @@
 # LCC 形状层超分与 finder 检测的小模型实验
 
 > **状态**：实验记录，2026-11-11。两个小模型都已训练并接进 C/WASM，**默认关闭**。
-> **结论先行**：不保留这一层。finder CNN 在真实照片上没有增加成功帧，单帧还要多花约 36–41 ms；超分 CNN 在模块级强退化集上只比双线性高约 5 个点，接进 C 后反而从 51.7% 掉到 13.3%，且每模块约 1.0 ms。默认 `lcc.wasm` 仍是 140 KB，模型代码只在 `LCC_ENABLE_MODELS=1` 时编入。
+> **结论先行**：finder CNN 和超分 CNN 不默认启用。finder 在真实照片上没有增加成功帧，单帧还要多花约 36–41 ms；超分 CNN 在 C 实际残差上反而比 16×16 双线性模板差，且每模块约 1.0 ms。把训练输入换成 C 实际残差后，一个 **模块级形状分类器** 有真实增益：`blur_shape` 44.6% → 57.5%，真实照片 4/13 → 5/13；但平均慢约 1.5×。因此分类器作为可选层 `16` 保留，默认仍为 0。默认 `lcc.wasm` 仍是 140 KB，模型代码只在 `LCC_ENABLE_MODELS=1` 时编入。
 
 ---
 
@@ -101,6 +101,40 @@ C 端失败的原因不是卷积算错，而是**输入分布对不上**：训�
 
 **判断**：不保留 SR CNN。当前默认路径不编译它。
 
+### 3.4 换成 C 实际残差重训
+
+为了排除“训练输入和 C 输入不是同一个分布”的干扰，新增了：
+
+- `lcc_api_debug_residuals()` / `debugResidualsWasm()`：在真实解码流程里把 `make_model_input()` 的结果原样导出，即模块边框中位数 → 16×16 重采样 → 归一化。
+- `scripts/dump-c-residuals.mjs`：对 `blur_shape` 的每一帧重新编码拿回符号/形状标签，再让 C 解码并保存它实际看到的 16×16 残差。
+
+从 180/240 个能走到数据模块的 `blur_shape` 帧导出 **367,755** 个模块残差，按样本 80/20 划分。验证集上：
+
+| 方法 | 模块级形状准确率 |
+| --- | ---: |
+| 当前 C `match_shape` | 91.3% |
+| 16×16 双线性 + 绝对值 NCC | 87.9% |
+| 合成数据训练的 SR CNN | 83.3% |
+| **C 实际残差训练的分类器（width 16）** | **97.0%** |
+| C 实际残差训练的分类器（width 8） | 96.1% |
+
+这组数字说明两件事：
+
+1. **C 和 PyTorch 的差异确实主要是输入分布**。同一个张量送进 C 卷积和 PyTorch，最大误差只有 `2e-6`；但合成模块残差和 C 实际残差之间的偏移，足以让同一个 SR 网络从 99% 掉到 83%。
+2. **修数据以后，有提升的不是超分，而是直接分类**。C 实际残差上，SR 仍然不如双线性模板，分类器却比当前 C 高 5–6 个点。
+
+分类器比 SR 便宜：width 8 原生标量 C **0.195 ms/模块**，SR 是 **1.02 ms/模块**。再加一层廉价门控：先用 16×16 模板算相关，`best ≥ 0.55` 且 `best - second ≥ 0.10` 就直接采用模板结果，否则才跑分类器。离线统计约 70% 模块可以跳过网络，准确率不变。
+
+端到端（C 分类器 + 门控，width 8）：
+
+| 数据 | 当前 C | 形状分类器 |
+| --- | ---: | ---: |
+| `blur_shape` 240 帧 | 44.6% / 259 ms | **57.5%** / 395 ms |
+| 合成 eval 240 帧 | 16.7% / 53 ms | **17.9%** / 184 ms |
+| 真实照片 13 张 | 4/13 | **5/13**（`IMG_5053` 的 L1s 现在能解） |
+
+分类器不是“超分”，它直接替换 `match_shape` 的决策，避免 32×32 模板和相关。它证明了 C 实际残差这条路是通的，但当前平均慢约 1.5×，所以只作为可选层保留。
+
 ---
 
 ## 4. 真实照片
@@ -118,11 +152,13 @@ C 端失败的原因不是卷积算错，而是**输入分布对不上**：训�
 
 打开 finder 或双线性超分后，成功数仍然是 **4/13**，没有多解出一张。finder 单独前向约 36–41 ms/帧；这些帧的失败点还是在格式/颜色/RS，不在定位。
 
+换成 C 实际残差训练的形状分类器后，`IMG_5053`（L1s）也能解出，成功数变成 **5/13**。其余失败帧不变。
+
 ---
 
 ## 5. 决策
 
-**默认不启用 finder 和超分 CNN。**
+**默认不启用任何模型；C 实际残差训练的形状分类器作为可选层保留。**
 
 - `lcc.wasm` 默认仍是 140 KB，和实验前一致。
 - 模型代码、权重和 C 算子保留在仓库里，只在 `LCC_ENABLE_MODELS=1` 时编译：
@@ -130,19 +166,22 @@ C 端失败的原因不是卷积算错，而是**输入分布对不上**：训�
   npm run build:wasm:model
   ```
 - 运行时用 `setWasmFeatures()` 打开：
-  - `1`：finder CNN 兜底
+  - `1`：finder CNN 兜底（不推荐）
   - `2`：双线性放大到 16×16 + 绝对值 NCC
-  - `4`：SR CNN
+  - `4`：SR CNN（不推荐）
   - `8`：只把形状 NCC 改成绝对值
+  - `16`：C 实际残差训练的形状分类器 + 模板门控（候选）
   - 0（默认）：原路径
 
-如果要继续这条线，优先级应该是：
+分类器目前是“值得继续”的那一层，原因是它直接吃 C 实际残差，参数只有 1.3k（width 8），并且能用廉价模板门控跳过大部分模块。它还没有默认打开，因为 `blur_shape` 平均耗时 259 → 395 ms，失败帧的 p95 也更长。
 
-1. **先在 C 里导出训练输入**，用真实解码残差训练，而不是独立渲染的模块。当前 SR 的主要问题是分布偏移。
-2. **做模块级形状分类器**，不一定输出 32×32 残差。分类器可以直接用整块证据，参数和算力都比超分低。
-3. **只在低分/低 margin 模块触发**，不要对每个模块都跑 CNN。
-4. **量化 + SIMD**。当前标量 float 每模块 1 ms，量化到 int8 和复用卷积窗口才有机会进 10 ms 量级。
-5. **finder 只做经典失败的兜底**，并且用更小的输入/更少的层；当前 192×192、30 MFLOP 的网在干净路径上不划算。
+如果继续优化，优先级是：
+
+1. **把失败帧也纳入训练**。当前只导出了 180/240 个能走到数据模块的帧；剩余 60 个需要从已知几何强制对齐后再取残差。
+2. **继续压分类器**：width 6/8、int8、SIMD 卷积；目标是把每模块 0.195 ms 再降一个量级。
+3. **门控放在原生 grid 上**，避免为了门控先做 16×16 重采样和一套模板相关。
+4. **只对低分/低 margin 模块跑分类器**，并在失败变体之间复用结果或提前判定。
+5. **finder 暂不投入**：当前 192×192、30 MFLOP 的网在干净路径上不划算，且没有找到能救回的真实样本。
 
 ---
 
@@ -160,6 +199,11 @@ uv run python training/train_finder.py --epochs 48 --width 32 --out training/mod
 uv run python training/make_sr_dataset.py --count 30000 --eval 3000 --hard 3000
 uv run python training/train_sr.py --epochs 24 --width 16
 
+# 2b. 导出 C 实际残差，训练 C 一致形状分类器
+npm run build:wasm
+node scripts/dump-c-residuals.mjs --manifest training/corpus/blur_shape/manifest.json
+uv run python training/train_shape_classifier.py --epochs 20 --width 8 --out training/models/shape_cls8.pt
+
 # 3. 导出 C 权重并编译模型版 WASM
 uv run python training/export_weights.py
 npm run build:wasm:model
@@ -167,10 +211,13 @@ npm run build:wasm:model
 # 4. 对比
 node scripts/bench-wasm.mjs --manifest training/corpus/eval/manifest.json --mode scan --features 0
 node scripts/bench-wasm.mjs --manifest training/corpus/eval/manifest.json --mode scan --features 1
+node scripts/bench-wasm.mjs --manifest training/corpus/eval/manifest.json --mode scan --features 16
 node scripts/bench-wasm.mjs --manifest training/corpus/blur_shape/manifest.json --mode decode --detector axis --features 0
 node scripts/bench-wasm.mjs --manifest training/corpus/blur_shape/manifest.json --mode decode --detector axis --features 4
+node scripts/bench-wasm.mjs --manifest training/corpus/blur_shape/manifest.json --mode decode --detector axis --features 16
 node scripts/bench-real.mjs --features 0
 node scripts/bench-real.mjs --features 1
+node scripts/bench-real.mjs --features 16
 
 # 5. 回到默认小 WASM
 npm run build:wasm

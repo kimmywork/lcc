@@ -283,6 +283,34 @@ export async function setWasmFeatures(features) {
   return wasm.lcc_api_set_features(features | 0);
 }
 
+export async function debugResidualsWasm(image, options = {}) {
+  const wasm = await loadInstance();
+  const mode = options.detector === 'axis' ? 1 : options.detector === 'perspective' ? 2 : 0;
+  const ptr = writeBytes(wasm, image.data);
+  try {
+    const status = wasm.lcc_api_debug_residuals(ptr, image.width, image.height, mode);
+    const bytes = readLast(wasm);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const count = view.getUint32(0, true);
+    const records = [];
+    for (let i = 0; i < count; i++) {
+      const base = 4 + i * (16 + 256 * 4);
+      const res = new Float32Array(256);
+      for (let k = 0; k < 256; k++) res[k] = view.getFloat32(base + 16 + k * 4, true);
+      records.push({
+        row: view.getInt32(base, true),
+        col: view.getInt32(base + 4, true),
+        gridN: view.getInt32(base + 8, true),
+        shape: view.getInt32(base + 12, true),
+        res,
+      });
+    }
+    return { status, records };
+  } finally {
+    wasm.free(ptr);
+  }
+}
+
 export async function finderCentersWasm(image) {
   const wasm = await loadInstance();
   const ptr = writeBytes(wasm, image.data);

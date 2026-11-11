@@ -15,6 +15,10 @@ void lcc_sr_forward(const float *x, float *out) {
   (void)x;
   for (int i = 0; i < 32 * 32; i++) out[i] = 0;
 }
+void lcc_shape_forward(const float *x, float *logits) {
+  (void)x;
+  for (int i = 0; i < 8; i++) logits[i] = 0;
+}
 int lcc_finder_centers(const uint8_t *gray, int width, int height, double out[3][2]) {
   (void)gray; (void)width; (void)height; (void)out;
   return 0;
@@ -218,6 +222,37 @@ void lcc_sr_forward(const float *x, float *out) {
   conv3x3(d, W, T, T, LCC_SR_C4_W, LCC_SR_C4_B, 1, out);
   lcc_bilinear_resample(x, G, G, skip, T, T);
   for (int i = 0; i < T * T; i++) out[i] += skip[i];
+}
+
+/*
+ * Module-level shape classifier over the decoder's 16x16 residual grid.
+ * Three 3x3 convolutions, global average + max pooling, linear 8-way head.
+ */
+void lcc_shape_forward(const float *x, float *logits) {
+  enum { G = LCC_SHAPE_GRID, W = LCC_SHAPE_WIDTH };
+  static float a[W * G * G];
+  static float b[W * G * G];
+  static float c[W * G * G];
+  conv3x3_relu(x, 1, G, G, LCC_SHAPE_C1_W, LCC_SHAPE_C1_B, W, a);
+  conv3x3_relu(a, W, G, G, LCC_SHAPE_C2_W, LCC_SHAPE_C2_B, W, b);
+  conv3x3_relu(b, W, G, G, LCC_SHAPE_C3_W, LCC_SHAPE_C3_B, W, c);
+  float feat[2 * W];
+  for (int ch = 0; ch < W; ch++) {
+    double sum = 0;
+    float mx = -1e30f;
+    for (int i = 0; i < G * G; i++) {
+      const float v = c[(size_t)ch * G * G + i];
+      sum += v;
+      if (v > mx) mx = v;
+    }
+    feat[ch] = (float)(sum / (G * G));
+    feat[W + ch] = mx;
+  }
+  for (int o = 0; o < 8; o++) {
+    double sum = LCC_SHAPE_FC_B[o];
+    for (int i = 0; i < 2 * W; i++) sum += (double)LCC_SHAPE_FC_W[o * 2 * W + i] * feat[i];
+    logits[o] = (float)sum;
+  }
 }
 
 typedef struct {
