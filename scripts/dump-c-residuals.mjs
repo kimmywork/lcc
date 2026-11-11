@@ -16,7 +16,7 @@ import { encode } from '../src/encoder.js';
 import { debugResidualsWasm } from '../docs/lib/lcc-wasm.js';
 
 function parseArgs(argv) {
-  const out = { manifest: 'training/corpus/blur_shape/manifest.json', out: 'training/corpus/c_residuals' };
+  const out = { manifest: 'training/corpus/blur_shape/manifest.json', out: 'training/corpus/c_residuals', detector: 'axis', onlyOk: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith('--')) continue;
@@ -78,8 +78,9 @@ async function main() {
     const sample = manifest.samples[i];
     const image = readImage(root, sample);
     const truth = expectedShapes(sample);
-    const debug = await debugResidualsWasm(image, { detector: 'axis' });
+    const debug = await debugResidualsWasm(image, { detector: String(args.detector) });
     if (!debug.records.length) continue;
+    if (args.onlyOk && debug.status !== 0) continue;
     const sampleIndex = samples.length;
     samples.push({
       file: sample.file,
