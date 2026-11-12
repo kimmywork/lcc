@@ -94,11 +94,12 @@ function main() {
     const { width, height, data } = result.image;
     const file = `symbol-${String(i).padStart(4, '0')}.rgb`;
     fs.writeFileSync(path.join(outDir, file), Buffer.from(data.buffer, data.byteOffset, data.byteLength));
-    const s = moduleSize;
+    const s = result.meta.moduleSize;
+    const qz = result.meta.quietZone;
     const finders = [
-      [quietZone + 3.5, quietZone + 3.5],
-      [quietZone + result.meta.N - 3.5, quietZone + 3.5],
-      [quietZone + 3.5, quietZone + result.meta.N - 3.5],
+      [qz + 3.5, qz + 3.5],
+      [qz + result.meta.N - 3.5, qz + 3.5],
+      [qz + 3.5, qz + result.meta.N - 3.5],
     ].map(([mx, my]) => [mx * s, my * s]);
     manifest.push({
       file,
@@ -109,7 +110,7 @@ function main() {
       version,
       N: result.meta.N,
       moduleSize: s,
-      quietZone,
+      quietZone: qz,
       finders,
     });
     if ((i + 1) % 25 === 0) process.stderr.write(`\r${i + 1}/${count}`);

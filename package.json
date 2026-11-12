@@ -11,6 +11,7 @@
     "test": "node --test",
     "demo": "node examples/text-examples.js",
     "shape:examples": "node examples/shape-examples.js",
+    "shape32:examples": "node examples/shape32-examples.js",
     "cli": "node src/cli.js",
     "build:wasm": "sh scripts/build-wasm.sh",
     "build:web": "node scripts/build-web.js",

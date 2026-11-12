@@ -14,6 +14,12 @@ import path from 'node:path';
 import { decodePNG } from '../src/png.js';
 import { scanFramesWasm } from '../docs/lib/lcc-wasm.js';
 
+// Only a decoder rejection is a normal miss. Loader/OOM failures should abort
+// the run so a missing or broken wasm cannot look like a low recognition rate.
+function isDecodeMiss(err) {
+  return err instanceof Error && err.message === 'LCC wasm decode failed';
+}
+
 function parseArgs(argv) {
   const out = { repeat: 1 };
   for (let i = 0; i < argv.length; i++) {
@@ -52,7 +58,8 @@ async function main() {
       try {
         result = await scanFramesWasm([image]);
       } catch (e) {
-        error = e.message;
+        if (!isDecodeMiss(e)) throw e;
+        error = 'miss';
         result = null;
       }
     }

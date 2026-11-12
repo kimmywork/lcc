@@ -43,6 +43,13 @@ function readImage(root, sample) {
   };
 }
 
+// The decoder signals a normal recognition miss with this message. Anything
+// else (missing wasm, OOM, loader failure) is infrastructure and must abort
+// the benchmark instead of being scored as a miss.
+function isDecodeMiss(err) {
+  return err instanceof Error && err.message === 'LCC wasm decode failed';
+}
+
 function quantile(values, q) {
   if (values.length === 0) return 0;
   const sorted = values.slice().sort((a, b) => a - b);
@@ -82,6 +89,7 @@ async function main() {
           ? await decodeAutoWasm(image, { detector: args.detector ?? 'perspective' })
           : await scanFramesWasm([image]);
       } catch (err) {
+        if (!isDecodeMiss(err)) throw err;
         result = null;
       }
       const dt = performance.now() - t0;

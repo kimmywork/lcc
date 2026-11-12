@@ -14,7 +14,7 @@ def emit(name: str, arr: np.ndarray, lines: list[str]) -> None:
     flat = np.asarray(arr, dtype=np.float32).reshape(-1)
     lines.append(f"static const float {name}[{flat.size}] = {{")
     for i in range(0, flat.size, 8):
-        chunk = ", ".join(f"{float(v):.8g}f" for v in flat[i : i + 8])
+        chunk = ", ".join(f"{float(v):.8e}f" for v in flat[i : i + 8])
         lines.append(f"  {chunk},")
     lines.append("};")
     lines.append("")

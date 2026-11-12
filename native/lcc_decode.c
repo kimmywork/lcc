@@ -1653,6 +1653,8 @@ static int try_name(
   int *payload_len,
   LccDecodeMeta *meta
 ) {
+  // Keep only records from this attempt so a successful final decode does not
+  // mix residual samples from earlier failed variants.
   if (g_dbg_capture) g_dbg_count = 0;
   LccVariant variant;
   if (!lcc_variant_build(prep, name, &variant)) return LCC_ERR;
@@ -1874,10 +1876,12 @@ int lcc_scan_frames(
   for (int i = 0; i < count; i++) {
     if (lcc_white_balance_copy(&frames[i], &balanced[n])) n++;
   }
-  if (n == 0) return status;
-  const int retry = scan_frames_impl(balanced, n, payload, payload_len, meta);
-  for (int i = 0; i < n; i++) lcc_release((void *)balanced[i].data);
-  if (retry == LCC_OK) return retry;
+  int retry = status;
+  if (n > 0) {
+    retry = scan_frames_impl(balanced, n, payload, payload_len, meta);
+    for (int i = 0; i < n; i++) lcc_release((void *)balanced[i].data);
+    if (retry == LCC_OK) return retry;
+  }
   for (int i = 0; i < count; i++) {
     const int full = decode_image_impl(&frames[i], 2, payload, payload_len, meta, 10);
     if (full == LCC_OK) return full;

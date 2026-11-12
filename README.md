@@ -85,6 +85,7 @@ LCC 是一套方形、分层、按信道能力换符号表的二维图形码。�
 ```bash
 npm run demo                 # 生成下面 5 个基础文本示例
 npm run shape:examples       # 生成前 4 个文本的形状层示例
+npm run shape32:examples     # 生成 32 符号层示例（L3u/L4eS/L4fS）
 npm test                     # 测试
 npm run build:wasm           # 编译 C 合成/解码核心到 docs/lib/lcc.wasm（有 emcc 用 Emscripten，否则用 zig）
 npm run build:web            # 复制浏览器核心到 docs/lib（保留 wasm）
@@ -127,6 +128,23 @@ npm run qr:examples
 
 ```bash
 npm run shape:examples
+```
+
+## 32 符号层示例
+
+富形状层在 8 种经典图案上再增加 24 种符号，共 32 种，每个模块额外 5 bit。  
+下面三个示例分别使用 **L3u（32 色 + 32 形状，10 bit）**、**L4eS（64 色 + 32 形状，11 bit）**、**L4fS（256 色 + 32 形状，13 bit）**，均 `decoded=OK`。32 形状层只面向数字、打印和受控拍摄，模块最低建议 16 px；高密度示例在最小模块附近需要 RS 纠正。
+
+| 文本 | 大小 | 32 符号层 | 图案 |
+| --- | ---: | --- | --- |
+| **Lorem ipsum**（完整段落） | 446 B | <img src="demo_outputs/lorem_ipsum_L3u.png" width="170"><br>L3u · v4 / N=33 · 27px · 10 bit | 32 色 + 32 形状 |
+| **心经** | 944 B | <img src="demo_outputs/heart_sutra_L4eS.png" width="170"><br>L4eS · v7 / N=45 · 20px · 11 bit | 64 色 + 32 形状 |
+| **金刚经** | 20406 B | <img src="demo_outputs/diamond_sutra_L4fS.png" width="170"><br>L4fS · v33 / N=149 · 20px · 13 bit | 256 色 + 32 形状 |
+
+生成：
+
+```bash
+npm run shape32:examples
 ```
 
 ## LCC vs QRCode

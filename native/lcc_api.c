@@ -44,6 +44,17 @@ static void wr_f32(uint8_t *p, float v) {
   memcpy(p, &v, 4);
 }
 
+static int reject_debug_residuals(int status) {
+  uint8_t *out = lcc_alloc(4);
+  if (out) {
+    memset(out, 0, 4);
+    set_last(out, 4);
+  } else {
+    set_last(NULL, 0);
+  }
+  return status;
+}
+
 static int publish_debug_residuals(int status) {
   const int count = lcc_debug_count();
   const int record = 16 + 256 * 4;
@@ -67,7 +78,7 @@ static int publish_debug_residuals(int status) {
 
 
 int lcc_api_debug_residuals(const uint8_t *rgb, int width, int height, int mode) {
-  if (!rgb || width <= 0 || height <= 0) return LCC_BAD_INPUT;
+  if (!rgb || width <= 0 || height <= 0) return reject_debug_residuals(LCC_BAD_INPUT);
   LccImage image = { width, height, rgb };
   uint8_t *payload = NULL;
   int payload_len = 0;
@@ -92,7 +103,7 @@ int lcc_api_debug_residuals_h(
   int module_size
 ) {
   if (!rgb || width <= 0 || height <= 0 || version < 1 || N < 21 || module_size <= 0) {
-    return LCC_BAD_INPUT;
+    return reject_debug_residuals(LCC_BAD_INPUT);
   }
   LccImage image = { width, height, rgb };
   LccFound found;
