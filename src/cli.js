@@ -2,8 +2,8 @@
 /**
  * LCC command-line tool.
  *
- *   lcc encode --input "Hello" --output hello.png --layer L2
- *   lcc encode --input-file examples/心经.txt --output sutra.png --layer L3b --size 2048
+ *   lcc encode --input "Hello" --output hello.png --layer G20
+ *   lcc encode --input-file examples/心经.txt --output sutra.png --layer C30 --size 2048
  *   lcc decode --input sutra.png
  */
 
@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { decodeAuto } from './decoder.js';
 import { encode } from './encoder.js';
-import { ECC_LEVELS, ECC_NAMES, LAYERS } from './constants.js';
+import { ECC_LEVELS, ECC_NAMES, LAYERS, resolveLayerName } from './constants.js';
 import { decodePNG, encodePNG } from './png.js';
 import { renderSVG } from './svg.js';
 
@@ -49,7 +49,7 @@ Usage:
     --input <text>         text payload
     --input-file <path>    read payload from file (UTF-8)
     --output <path>        output PNG (required)
-    --layer <name>          L1/L2a/L3b/L3c/L1s/L2s/L3s/L3t/L3u/L4eS/L4fS/... default L1
+    --layer <name>          G10/G13/G20/C30/C40/C55/... or legacy L1/L2a/L3c/... default G10
     --size <px>            canvas side, default 1024
     --mode <fill|compact>  default fill
     --palette <maxmin|harmony>  default maxmin
@@ -61,9 +61,9 @@ Usage:
     --module-size <px>     fixed module size
     --quiet-zone <n>       quiet zone in modules
     --format <png|svg>     output format (default from extension)
-    --constraint           enable reversible constraint (default on for L2/L3)
+    --constraint           enable reversible constraint (default from layer)
     --no-constraint        disable constraint (recommended for camera)
-    --seed <0..63>         whitening seed, default 0
+    --seed <0..63>         whitening seed (non-shape layers), default 0
 
   lcc decode --input <path> [--output <path>] [--json]
   lcc info
@@ -76,7 +76,7 @@ function cmdEncode(args) {
   if (args['input-file']) payload = fs.readFileSync(args['input-file'], 'utf8');
   else if (args.input !== undefined) payload = String(args.input);
   else throw new Error('encode: provide --input or --input-file');
-  const layer = args.layer ?? 'L1';
+  const layer = resolveLayerName(args.layer ?? 'G10');
   if (!LAYERS[layer]) throw new Error(`unknown layer: ${layer}`);
   const size = Number(args.size ?? 1024);
   const constraint = args.constraint === false ? false : args.constraint === true ? true : undefined;

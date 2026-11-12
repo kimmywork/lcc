@@ -38,16 +38,16 @@ static void hilbert_d2xy(int n, int d, int *x, int *y) {
 }
 
 static int sample_count(const LccPaletteInfo *p, int N) {
-  if (!p || strcmp(p->name, "L1") == 0 || p->kind == 0) return 0;
+  if (!p || strcmp(p->name, "G10") == 0 || p->kind == 0) return 0;
   if (p->shape_set > 0) {
     const int count = p->palette_size;
     if (count <= 8) return count;
     return N < 33 ? 8 : count;
   }
-  if (strcmp(p->name, "L3c") == 0) return 16;
-  if (strcmp(p->name, "L3d") == 0) return N < 33 ? 16 : 32;
-  if (strcmp(p->name, "L4e") == 0) return N < 33 ? 16 : N < 57 ? 32 : 64;
-  if (strcmp(p->name, "L4f") == 0) return N < 33 ? 16 : N < 57 ? 64 : 256;
+  if (strcmp(p->name, "C40") == 0) return 16;
+  if (strcmp(p->name, "C50") == 0) return N < 33 ? 16 : 32;
+  if (strcmp(p->name, "C60") == 0) return N < 33 ? 16 : N < 57 ? 32 : 64;
+  if (strcmp(p->name, "C80") == 0) return N < 33 ? 16 : N < 57 ? 64 : 256;
   return 0;
 }
 
@@ -159,7 +159,7 @@ int lcc_make_layout(const LccPaletteInfo *palette, int version, LccLayout *layou
     }
   }
 
-  if (strcmp(palette->name, "L1") != 0) {
+  if (strcmp(palette->name, "G10") != 0) {
     const int palette_count = sample_count(palette, N);
     const int palette_side = palette_count == 0 ? 0 : (int)ceil(sqrt((double)palette_count));
     const int gray_levels = palette->kind == 0 ? palette->levels : 16;

@@ -3,7 +3,7 @@
     "name": "hello_world",
     "label": "Hello World!",
     "bytes": 12,
-    "layer": "L1",
+    "layer": "G10",
     "version": 2,
     "N": 25,
     "moduleSize": 17,
@@ -16,13 +16,13 @@
     "payloadCapacity": 17,
     "corrected": 0,
     "ok": true,
-    "file": "demo_outputs/hello_world_L1.png"
+    "file": "demo_outputs/hello_world_G10.png"
   },
   {
     "name": "quick_brown_fox",
     "label": "The quick brown fox",
     "bytes": 44,
-    "layer": "L2a",
+    "layer": "G20",
     "version": 2,
     "N": 25,
     "moduleSize": 17,
@@ -35,13 +35,13 @@
     "payloadCapacity": 44,
     "corrected": 0,
     "ok": true,
-    "file": "demo_outputs/quick_brown_fox_L2a.png"
+    "file": "demo_outputs/quick_brown_fox_G20.png"
   },
   {
     "name": "lorem_ipsum",
     "label": "Lorem ipsum",
     "bytes": 446,
-    "layer": "L3c",
+    "layer": "C40",
     "version": 7,
     "N": 45,
     "moduleSize": 20,
@@ -54,13 +54,13 @@
     "payloadCapacity": 508,
     "corrected": 0,
     "ok": true,
-    "file": "demo_outputs/lorem_ipsum_L3c.png"
+    "file": "demo_outputs/lorem_ipsum_C40.png"
   },
   {
     "name": "heart_sutra",
     "label": "心经",
     "bytes": 944,
-    "layer": "L3d",
+    "layer": "C50",
     "version": 10,
     "N": 57,
     "moduleSize": 16,
@@ -73,13 +73,13 @@
     "payloadCapacity": 1014,
     "corrected": 0,
     "ok": true,
-    "file": "demo_outputs/heart_sutra_L3d.png"
+    "file": "demo_outputs/heart_sutra_C50.png"
   },
   {
     "name": "diamond_sutra",
     "label": "金刚经",
     "bytes": 20406,
-    "layer": "L4f",
+    "layer": "C80",
     "version": 45,
     "N": 197,
     "moduleSize": 10,
@@ -92,6 +92,6 @@
     "payloadCapacity": 22635,
     "corrected": 0,
     "ok": true,
-    "file": "demo_outputs/diamond_sutra_L4f.png"
+    "file": "demo_outputs/diamond_sutra_C80.png"
   }
 ]

@@ -8,7 +8,7 @@
  */
 
 import { deltaE76, generateGrayPalette, rgbToLab } from './color.js';
-import { LAYERS, layerMaxRankDiff, layerRankCount } from './constants.js';
+import { LAYERS, layerMaxRankDiff, layerRankCount, resolveLayerName } from './constants.js';
 
 const cache = new Map();
 
@@ -153,6 +153,7 @@ function nearestRank(lab, grayLab) {
 }
 
 export function generatePalette(layerName, options = {}) {
+  layerName = resolveLayerName(layerName);
   const layer = LAYERS[layerName];
   if (!layer) throw new Error(`Unknown layer: ${layerName}`);
   const mode = options.mode ?? 'maxmin';

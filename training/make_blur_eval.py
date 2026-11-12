@@ -36,7 +36,7 @@ def main() -> None:
     ap.add_argument("--count", type=int, default=240)
     ap.add_argument("--seed", type=int, default=4242)
     args = ap.parse_args()
-    clean = [c for c in load_manifest(Path(args.clean)) if c.layer in ("L1s", "L2s", "L3s", "L3t")]
+    clean = [c for c in load_manifest(Path(args.clean)) if c.layer in ("G13", "G23", "C33", "C43")]
     rng = random.Random(args.seed)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

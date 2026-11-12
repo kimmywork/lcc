@@ -1,9 +1,11 @@
 /**
  * README 32-symbol layer examples.
  *
- * Generates one text for each rich shape layer: L3u (32 colors),
- * L4eS (64 colors), L4fS (256 colors). These layers are intended for
- * digital/print/controlled capture, not casual phone photos.
+ * Generates representative 32-symbol layers across the full matrix:
+ * G15 (2-state B/W), G25 (4 gray), G35 (8 gray), C25 (4 colors),
+ * C55 (32 colors), C65 (64 colors), C85 (256 colors).
+ * These layers are intended for digital/print/controlled capture, not casual
+ * phone photos.
  *
  * Run: node examples/shape32-examples.js
  */
@@ -19,9 +21,25 @@ fs.mkdirSync(outDir, { recursive: true });
 
 const cases = [
   {
+    name: 'hello_world',
+    label: 'Hello World!',
+    layer: 'G15',
+    width: 1024,
+    height: 1024,
+    text: 'Hello World!',
+  },
+  {
+    name: 'quick_brown_fox',
+    label: 'The quick brown fox',
+    layer: 'G25',
+    width: 1024,
+    height: 1024,
+    text: 'The quick brown fox jumps over the lazy dog.',
+  },
+  {
     name: 'lorem_ipsum',
     label: 'Lorem ipsum',
-    layer: 'L3u',
+    layer: 'G35',
     width: 1024,
     height: 1024,
     file: 'examples/lorem_ipsum.txt',
@@ -29,7 +47,23 @@ const cases = [
   {
     name: 'heart_sutra',
     label: '心经',
-    layer: 'L4eS',
+    layer: 'C25',
+    width: 1024,
+    height: 1024,
+    file: 'examples/心经.txt',
+  },
+  {
+    name: 'lorem_ipsum',
+    label: 'Lorem ipsum',
+    layer: 'C55',
+    width: 1024,
+    height: 1024,
+    file: 'examples/lorem_ipsum.txt',
+  },
+  {
+    name: 'heart_sutra',
+    label: '心经',
+    layer: 'C65',
     width: 1024,
     height: 1024,
     file: 'examples/心经.txt',
@@ -37,7 +71,7 @@ const cases = [
   {
     name: 'diamond_sutra',
     label: '金刚经',
-    layer: 'L4fS',
+    layer: 'C85',
     width: 3072,
     height: 3072,
     file: 'examples/金刚经.txt',

@@ -6,7 +6,7 @@
  * background rect plus foreground line segments.
  */
 
-import { LAYERS } from './constants.js';
+import { LAYERS, resolveLayerName } from './constants.js';
 import {
   foregroundFor,
   shapeFillsNormalized,
@@ -29,7 +29,7 @@ export function renderSVG({
   const N = layout.N;
   const total = N + 2 * quietZone;
   const size = total * moduleSize;
-  const layerInfo = layer ?? LAYERS[layout.layer] ?? null;
+  const layerInfo = (layer ? LAYERS[resolveLayerName(layer)] : LAYERS[layout.layer]) ?? null;
   const shapeSetSize = layerInfo?.shapeSetSize ?? 1;
   const colorCount = palette.length;
   const lineWidthPx = shapeLineWidth(moduleSize);

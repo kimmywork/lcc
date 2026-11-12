@@ -14,6 +14,7 @@ import {
   LAYERS,
   LAYER_BY_ID,
   eccNameOf,
+  resolveLayerName,
   resolveShapeLayer,
   sizeToVersion,
   versionToSize,
@@ -275,7 +276,7 @@ export function decode(image, options = {}) {
     det.originY + (row + 0.5) * det.s,
   ]);
   const version = options.version ?? det.version ?? sizeToVersion(det.N);
-  const layoutProbe = makeLayout({ version, layer: 'L1', paletteMode: 'maxmin' });
+  const layoutProbe = makeLayout({ version, layer: 'G10', paletteMode: 'maxmin' });
   const thresholdAtRowCol = det.thresholdAtRowCol ?? (() => det.threshold ?? 128);
   const getFormatSymbol = (r, c) => {
     const rgb = rawSampler(r, c);
@@ -285,9 +286,10 @@ export function decode(image, options = {}) {
   const fmt = readFormatBand(getFormatSymbol, layoutProbe);
 
   const normalLayer = LAYER_BY_ID.get(fmt.modeId);
-  const layerName = options.layer
+  const shapeVariant = fmt.modeId === 7 ? (fmt.seed & 3) : 0;
+  const layerName = resolveLayerName(options.layer)
     ?? (fmt.modeId === 7
-      ? resolveShapeLayer(fmt.shapeLayerId, fmt.shapeExt)
+      ? resolveShapeLayer(fmt.shapeLayerId, fmt.shapeExt, shapeVariant)
       : normalLayer?.name);
   if (!layerName) throw new Error(`LCC decode: unknown layer id ${fmt.modeId}`);
   const layer = LAYERS[layerName];
@@ -295,7 +297,7 @@ export function decode(image, options = {}) {
   const paletteMode = isShapeLayer ? 'maxmin' : (options.paletteMode ?? fmt.paletteMode);
   const harmony = isShapeLayer ? false : (options.harmony ?? fmt.harmony);
   const constraint = isShapeLayer ? false : (options.constraint ?? fmt.constraint);
-  const seed = options.seed ?? fmt.seed;
+  const seed = isShapeLayer ? 0 : (options.seed ?? fmt.seed);
 
   const paletteInfo = generatePalette(layerName, { mode: paletteMode, harmony });
   const layout = makeLayout({ version, layer: layerName, paletteMode, harmony, paletteInfo });
@@ -367,8 +369,10 @@ export function decode(image, options = {}) {
     constraint,
     seed,
     shapeSetSize: layer.shapeSetSize ?? 1,
+    legacyLayer: layer.legacyName ?? null,
     shapeLayerId: isShapeLayer ? layer.shapeLayerId : null,
     shapeExt: isShapeLayer ? layer.shapeExt : 0,
+    shapeVariant: isShapeLayer ? (layer.shapeVariant ?? 0) : 0,
     ecc: ECC_LEVELS[fmt.eccIndex] ?? LAYERS[layerName].ecc,
     eccLevel: eccNameOf(ECC_LEVELS[fmt.eccIndex] ?? LAYERS[layerName].ecc),
   };
@@ -376,7 +380,7 @@ export function decode(image, options = {}) {
   const attempt = (symbols, costs, calibrationType) => {
     let writer;
     let capacityBits;
-    if (layerName === 'L1') {
+    if (layerName === 'G10') {
       writer = new BitWriter();
       for (const s of symbols) writer.writeBit(s & 1);
       capacityBits = layout.dataCount;
@@ -443,7 +447,7 @@ export function decode(image, options = {}) {
         constraintMaxDiff: paletteInfo.maxRankDiff,
         dataCount: layout.dataCount,
         capacityBits,
-        bitsPerModule: layerName === 'L1'
+        bitsPerModule: layerName === 'G10'
           ? 1
           : constraint
             ? capacityBits / layout.dataCount
@@ -454,8 +458,10 @@ export function decode(image, options = {}) {
         calibration: calibrationType,
         flags: frame.flags,
         shapeLayer: isShapeLayer,
+        legacyLayer: layer.legacyName ?? null,
         shapeLayerId: isShapeLayer ? layer.shapeLayerId : null,
         shapeExt: isShapeLayer ? layer.shapeExt : 0,
+        shapeVariant: isShapeLayer ? (layer.shapeVariant ?? 0) : 0,
         shapeSetSize: layer.shapeSetSize ?? 1,
         shapeBits: isShapeLayer ? Math.log2(layer.shapeSetSize) : 0,
         colorCount: layer.paletteSize,
@@ -469,7 +475,7 @@ export function decode(image, options = {}) {
     return attempt(symbolsCal, null, calibrator.type);
   } catch (firstError) {
     if (!firstError.lccMeta) firstError.lccMeta = errorMeta;
-    if (!isShapeLayer && layerName !== 'L1' && paletteInfo.kind === 'gray') {
+    if (!isShapeLayer && layerName !== 'G10' && paletteInfo.kind === 'gray') {
       const lr = localRankSymbols({ layout, rgbSamples, levels: paletteInfo.paletteSize });
       try {
         return attempt(Array.from(lr.symbols), lr.costs, 'local-rank');

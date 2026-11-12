@@ -10,11 +10,12 @@ import { makeLayout } from '../src/layout.js';
 import { bch15Decode, bch15Encode } from '../src/ecc/bch15.js';
 import { rsDecode, rsEncode } from '../src/ecc/rs.js';
 import { encode } from '../src/encoder.js';
+import { LAYERS, LEGACY_LAYER_ALIASES, resolveLayerName, resolveShapeLayer } from '../src/constants.js';
 import { buildFrame, parseFrame } from '../src/frame.js';
 import { generatePalette } from '../src/palettes.js';
 import { decodePNG, encodePNG } from '../src/png.js';
 import { applyHomography, computeHomography } from '../src/detector.js';
-import { classifyShape, foregroundFor, shapeMask } from '../src/shapes.js';
+import { classifyShape, foregroundFor, shapeMask, shapeSegmentsNormalized } from '../src/shapes.js';
 import { stackCanonicalFrames } from '../src/stack.js';
 import { renderSVG } from '../src/svg.js';
 
@@ -65,12 +66,12 @@ test('palette sizes and minimum DeltaE', () => {
     const p = generatePalette(layer, { mode: 'maxmin' });
     assert.equal(p.palette.length, size, layer);
   }
-  assert.ok(minPairwiseDeltaE(generatePalette('L3c').paletteLab) >= 20);
-  assert.ok(minPairwiseDeltaE(generatePalette('L3d').paletteLab) >= 15);
+  assert.ok(minPairwiseDeltaE(generatePalette('C40').paletteLab) >= 20);
+  assert.ok(minPairwiseDeltaE(generatePalette('C50').paletteLab) >= 15);
 });
 
 test('reversible rank constraint works for 8-rank gray', () => {
-  const palette = generatePalette('L2b', { mode: 'maxmin' });
+  const palette = generatePalette('G30', { mode: 'maxmin' });
   const rc = new RankConstraint(palette);
   assert.equal(rc.rankCount, 8);
   assert.equal(rc.maxDiff, 4);
@@ -113,7 +114,7 @@ test('homography maps the four canonical corners', () => {
 
 test('clean-image round-trip for all layers', () => {
   const text = 'LCC round-trip 你好';
-  for (const layer of ['L1', 'L2a', 'L2b', 'L3c', 'L3d', 'L4e', 'L4f']) {
+  for (const layer of ['G10', 'G20', 'G30', 'C40', 'C50', 'C60', 'C80']) {
     const result = encode(text, {
       layer,
       width: 512,
@@ -130,7 +131,7 @@ test('clean-image round-trip for all layers', () => {
 
 test('constraint-on round-trip for L2b and L3c', () => {
   const text = 'constraint on';
-  for (const layer of ['L2b', 'L3c']) {
+  for (const layer of ['G30', 'C40']) {
     const result = encode(text, {
       layer,
       width: 512,
@@ -146,17 +147,17 @@ test('constraint-on round-trip for L2b and L3c', () => {
 
 test('ECC selection and Boost ECC', () => {
   const base = encode('ECC', {
-    layer: 'L2a', width: 512, height: 512, mode: 'fill', constraint: false,
+    layer: 'G20', width: 512, height: 512, mode: 'fill', constraint: false,
     eccLevel: 'L', boostEcc: false,
   });
   assert.equal(base.meta.eccLevel, 'L');
   const high = encode('ECC', {
-    layer: 'L2a', width: 512, height: 512, mode: 'fill', constraint: false,
+    layer: 'G20', width: 512, height: 512, mode: 'fill', constraint: false,
     eccLevel: 'H', boostEcc: false,
   });
   assert.equal(high.meta.eccLevel, 'H');
   const boosted = encode('ECC', {
-    layer: 'L2a', width: 512, height: 512, mode: 'fill', constraint: false,
+    layer: 'G20', width: 512, height: 512, mode: 'fill', constraint: false,
     eccLevel: 'L', boostEcc: true,
   });
   assert.ok(boosted.meta.ecc >= base.meta.ecc);
@@ -168,7 +169,7 @@ test('ECC selection and Boost ECC', () => {
 
 test('version range, module size and quiet zone', () => {
   const result = encode('V5', {
-    layer: 'L2a', width: 512, height: 512, mode: 'fill', constraint: false,
+    layer: 'G20', width: 512, height: 512, mode: 'fill', constraint: false,
     version: 5, moduleSize: 8, quietZone: 4,
   });
   assert.equal(result.meta.version, 5);
@@ -182,17 +183,18 @@ test('version range, module size and quiet zone', () => {
 test('shape ladder covers 3-7 bits/module', () => {
   const text = 'shape ladder';
   const expected = new Map([
-    ['L3b', 3],
-    ['L1s', 4],
-    ['L2s', 5],
-    ['L3s', 6],
-    ['L3t', 7],
+    ['C30', 3],
+    ['G13', 4],
+    ['G23', 5],
+    ['G33', 6],
+    ['C33', 6],
+    ['C43', 7],
   ]);
   for (const [layer, bits] of expected) {
     const result = encode(text, {
       layer,
-      version: layer === 'L3t' ? 10 : 2,
-      moduleSize: layer === 'L3t' ? 16 : 24,
+      version: layer === 'C43' ? 10 : 2,
+      moduleSize: layer === 'C43' ? 16 : 24,
       width: 1024,
       height: 1024,
       mode: 'fill',
@@ -206,10 +208,10 @@ test('shape ladder covers 3-7 bits/module', () => {
   }
 });
 
-test('L3t uses large modules for small payloads', () => {
+test('C43 uses large modules for small payloads', () => {
   for (const quietZone of [2, 4]) {
     const result = encode('tiny', {
-      layer: 'L3t',
+      layer: 'C43',
       width: 1024,
       height: 1024,
       mode: 'fill',
@@ -217,7 +219,7 @@ test('L3t uses large modules for small payloads', () => {
       maxModulePx: 32,
     });
     assert.equal(result.meta.version, 2);
-    assert.ok(result.meta.moduleSize >= 30, `L3t module size ${result.meta.moduleSize}`);
+    assert.ok(result.meta.moduleSize >= 30, `C43 module size ${result.meta.moduleSize}`);
     const decoded = decodeAuto(decodePNG(encodePNG(result.image)));
     assert.equal(decoded.text, 'tiny');
   }
@@ -225,7 +227,7 @@ test('L3t uses large modules for small payloads', () => {
 
 test('32-shape rich layers round-trip', () => {
   const text = 'rich shapes 32';
-  for (const layer of ['L3u', 'L4eS', 'L4fS']) {
+  for (const layer of ['G15', 'G25', 'G35', 'C25', 'C35', 'C45', 'C55', 'C65', 'C85']) {
     const result = encode(text, {
       layer,
       width: 1024,
@@ -234,12 +236,37 @@ test('32-shape rich layers round-trip', () => {
       moduleSize: 16,
       constraint: false,
       maxModulePx: 32,
+      version: layer === 'C85' ? 6 : undefined,
     });
     assert.equal(result.meta.shapeSetSize, 32, `${layer} shape set`);
-    assert.equal(result.meta.bitsPerModule, { L3u: 10, L4eS: 11, L4fS: 13 }[layer], `${layer} bits`);
+    assert.equal(result.meta.bitsPerModule, { G15: 6, G25: 7, G35: 8, C25: 7, C35: 8, C45: 9, C55: 10, C65: 11, C85: 13 }[layer], `${layer} bits`);
     const decoded = decodeAuto(decodePNG(encodePNG(result.image)));
     assert.equal(decoded.text, text, `${layer} round-trip`);
     assert.equal(decoded.meta.layer, layer, `${layer} layer`);
+  }
+});
+
+test('canonical layer matrix and legacy aliases are consistent', () => {
+  for (const [name, layer] of Object.entries(LAYERS)) {
+    const colorBits = Math.log2(layer.paletteSize);
+    const shapeBits = Math.log2(layer.shapeSetSize ?? 1);
+    assert.equal(layer.bitsPerModule, colorBits + shapeBits, `${name} bits`);
+    if (layer.kind === 'gray') {
+      assert.equal(layer.levels, layer.paletteSize, `${name} gray levels`);
+    } else {
+      assert.equal(layer.colors, layer.paletteSize, `${name} colors`);
+    }
+    if (layer.shapeSetSize) {
+      assert.equal(
+        resolveShapeLayer(layer.shapeLayerId, layer.shapeExt, layer.shapeVariant ?? 0),
+        name,
+        `${name} shape code`,
+      );
+    }
+  }
+  for (const [legacy, canonical] of LEGACY_LAYER_ALIASES) {
+    assert.equal(resolveLayerName(legacy), canonical, `${legacy} alias`);
+    assert.ok(LAYERS[canonical], `${canonical} exists`);
   }
 });
 
@@ -252,6 +279,46 @@ test('all 32 shape masks are non-empty and distinct', () => {
     const key = Array.from(mask).join('');
     assert.ok(!seen.has(key), `shape ${shape} duplicates another mask`);
     seen.add(key);
+  }
+});
+
+test('32-shape arrow geometry uses full shafts', () => {
+  const near = (value, expected, label) => {
+    assert.ok(Math.abs(value - expected) < 1e-9, `${label}: ${value} != ${expected}`);
+  };
+  const length = ([x1, y1, x2, y2]) => Math.hypot(x2 - x1, y2 - y1);
+  const shafts = [
+    [12, [0.0625, 0.5, 0.9375, 0.5], [0.0625, 0.5]],
+    [13, [0.5, 0.0625, 0.5, 0.9375], [0.5, 0.0625]],
+    [14, [0.0625, 0.5, 0.9375, 0.5], [0.9375, 0.5]],
+    [15, [0.5, 0.0625, 0.5, 0.9375], [0.5, 0.9375]],
+  ];
+  for (const [shape, shaft, tip] of shafts) {
+    const segments = shapeSegmentsNormalized(shape);
+    assert.equal(segments.length, 3, `shape ${shape} segment count`);
+    for (let i = 0; i < 4; i++) near(segments[0][i], shaft[i], `shape ${shape} shaft`);
+    for (const head of segments.slice(1)) {
+      near(head[0], tip[0], `shape ${shape} head x`);
+      near(head[1], tip[1], `shape ${shape} head y`);
+      near(length(head), Math.SQRT2 * 0.4375, `shape ${shape} head length`);
+    }
+  }
+
+  const diagonals = [
+    [16, [0.0625, 0.0625, 0.9375, 0.9375], [0.0625, 0.0625]],
+    [17, [0.0625, 0.9375, 0.9375, 0.0625], [0.9375, 0.0625]],
+    [18, [0.0625, 0.0625, 0.9375, 0.9375], [0.9375, 0.9375]],
+    [19, [0.9375, 0.0625, 0.0625, 0.9375], [0.0625, 0.9375]],
+  ];
+  for (const [shape, diagonal, tip] of diagonals) {
+    const segments = shapeSegmentsNormalized(shape);
+    assert.equal(segments.length, 3, `shape ${shape} segment count`);
+    for (let i = 0; i < 4; i++) near(segments[0][i], diagonal[i], `shape ${shape} diagonal`);
+    for (const head of segments.slice(1)) {
+      near(head[0], tip[0], `shape ${shape} head x`);
+      near(head[1], tip[1], `shape ${shape} head y`);
+      near(length(head), 0.4375, `shape ${shape} head length`);
+    }
   }
 });
 
@@ -272,7 +339,7 @@ test('foreground colour keeps contrast on mid-grey', () => {
 test('multi-frame stacking decodes a noisy burst', () => {
   const text = 'stack test';
   const result = encode(text, {
-    layer: 'L3s',
+    layer: 'C33',
     version: 2,
     moduleSize: 24,
     width: 1024,
@@ -323,7 +390,7 @@ test('locator white balance corrects neutral colour cast', () => {
     cool: [[0.62, 0.82, 1], [0, 0, 0]],
     red: [[0.55, 1, 1], [8, 0, 0]],
   };
-  for (const layer of ['L3c', 'L3s']) {
+  for (const layer of ['C40', 'C33']) {
     const result = encode(text, {
       layer,
       version: 2,
@@ -341,7 +408,7 @@ test('locator white balance corrects neutral colour cast', () => {
       det.originX + (col + 0.5) * det.s,
       det.originY + (row + 0.5) * det.s,
     ];
-    const layout = makeLayout({ version: det.version, layer: 'L1' });
+    const layout = makeLayout({ version: det.version, layer: 'G10' });
     const neutral = buildIlluminationModel({ layout, image: result.image, pointAt });
     assert.equal(neutral.chromatic, false, `${layer} clean locators stay neutral`);
 
@@ -353,7 +420,7 @@ test('locator white balance corrects neutral colour cast', () => {
         castDet.originY + (row + 0.5) * castDet.s,
       ];
       const model = buildIlluminationModel({
-        layout: makeLayout({ version: castDet.version, layer: 'L1' }),
+        layout: makeLayout({ version: castDet.version, layer: 'G10' }),
         image: cast,
         pointAt: castPoint,
       });
@@ -366,7 +433,7 @@ test('locator white balance corrects neutral colour cast', () => {
 
 test('SVG renders shape strokes', () => {
   const result = encode('SVG shape', {
-    layer: 'L3s',
+    layer: 'C33',
     version: 10,
     moduleSize: 16,
     width: 1024,
@@ -387,7 +454,7 @@ test('SVG renders shape strokes', () => {
 
 test('SVG output and encoder statistics', () => {
   const result = encode('SVG', {
-    layer: 'L1', width: 512, height: 512, mode: 'fill', constraint: false,
+    layer: 'G10', width: 512, height: 512, mode: 'fill', constraint: false,
   });
   const svg = renderSVG({
     symbols: result.symbols,
