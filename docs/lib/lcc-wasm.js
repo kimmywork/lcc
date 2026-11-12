@@ -297,35 +297,6 @@ function parseDebugRecords(bytes) {
   return records;
 }
 
-function parseDebugRecordsSymbols(bytes) {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const header = 64;
-  const count = view.getUint32(0, true);
-  const meta = {
-    status: view.getInt32(4, true),
-    version: view.getInt32(8, true),
-    N: view.getInt32(12, true),
-    dataCount: view.getInt32(16, true),
-    formatBlocks: view.getInt32(20, true),
-    shapeSet: view.getInt32(24, true),
-    layer: new TextDecoder().decode(bytes.slice(28, 36)).replace(/\0.*$/, ''),
-  };
-  const records = [];
-  for (let i = 0; i < count; i++) {
-    const base = header + i * (20 + 256 * 4);
-    const res = new Float32Array(256);
-    for (let k = 0; k < 256; k++) res[k] = view.getFloat32(base + 20 + k * 4, true);
-    records.push({
-      row: view.getInt32(base, true),
-      col: view.getInt32(base + 4, true),
-      gridN: view.getInt32(base + 8, true),
-      shape: view.getInt32(base + 12, true),
-      symbol: view.getInt32(base + 16, true),
-      res,
-    });
-  }
-  return { records, meta };
-}
 
 export async function debugResidualsWasm(image, options = {}) {
   const wasm = await loadInstance();
@@ -359,26 +330,6 @@ export async function debugResidualsForcedWasm(image, homography, version, N, mo
   }
 }
 
-export async function debugResidualsForcedSymbolsWasm(image, homography, version, N, moduleSize, variant = 0) {
-  if (!Array.isArray(homography) || homography.length !== 9) {
-    throw new Error('debugResidualsForcedSymbolsWasm: homography must be an array of 9 numbers');
-  }
-  const wasm = await loadInstance();
-  const ptr = writeBytes(wasm, image.data);
-  try {
-    const status = wasm.lcc_api_debug_residuals_h_symbols(
-      ptr, image.width, image.height,
-      homography[0], homography[1], homography[2],
-      homography[3], homography[4], homography[5],
-      homography[6], homography[7], homography[8],
-      version, N, moduleSize, variant,
-    );
-    const parsed = parseDebugRecordsSymbols(readLast(wasm));
-    return { status, records: parsed.records, meta: parsed.meta };
-  } finally {
-    wasm.free(ptr);
-  }
-}
 
 export async function scanFramesWasm(frames) {
   const wasm = await loadInstance();

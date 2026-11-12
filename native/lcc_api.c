@@ -65,36 +65,6 @@ static int publish_debug_residuals(int status) {
   return status;
 }
 
-static int publish_debug_symbols(int status, const LccDecodeMeta *meta) {
-  const int count = lcc_debug_count();
-  const int header = 64;
-  const int record = 20 + 256 * 4;
-  uint8_t *out = lcc_alloc((size_t)header + (size_t)count * (size_t)record);
-  if (!out) return LCC_ERR;
-  memset(out, 0, header);
-  wr_u32(out + 0, (uint32_t)count);
-  wr_u32(out + 4, (uint32_t)status);
-  wr_u32(out + 8, (uint32_t)(meta ? meta->version : 0));
-  wr_u32(out + 12, (uint32_t)(meta ? meta->N : 0));
-  wr_u32(out + 16, (uint32_t)(meta ? meta->data_count : 0));
-  wr_u32(out + 20, (uint32_t)(meta ? meta->format_blocks : 0));
-  wr_u32(out + 24, (uint32_t)(meta ? meta->shape_set : 0));
-  if (meta) memcpy(out + 28, meta->layer, 8);
-  float res[256];
-  for (int i = 0; i < count; i++) {
-    int row = 0, col = 0, grid_n = 0, shape = -1;
-    lcc_debug_get(i, &row, &col, &grid_n, &shape, res);
-    uint8_t *p = out + header + (size_t)i * (size_t)record;
-    wr_u32(p + 0, (uint32_t)row);
-    wr_u32(p + 4, (uint32_t)col);
-    wr_u32(p + 8, (uint32_t)grid_n);
-    wr_u32(p + 12, (uint32_t)shape);
-    wr_u32(p + 16, (uint32_t)lcc_debug_get_symbol(i));
-    for (int k = 0; k < 256; k++) wr_f32(p + 20 + k * 4, res[k]);
-  }
-  set_last(out, header + count * record);
-  return status;
-}
 
 int lcc_api_debug_residuals(const uint8_t *rgb, int width, int height, int mode) {
   if (!rgb || width <= 0 || height <= 0) return LCC_BAD_INPUT;
@@ -149,45 +119,6 @@ int lcc_api_debug_residuals_h(
   return publish_debug_residuals(status);
 }
 
-int lcc_api_debug_residuals_h_symbols(
-  const uint8_t *rgb,
-  int width,
-  int height,
-  double h0, double h1, double h2,
-  double h3, double h4, double h5,
-  double h6, double h7, double h8,
-  int version,
-  int N,
-  int module_size,
-  int variant
-) {
-  if (!rgb || width <= 0 || height <= 0 || version < 1 || N < 21 || module_size <= 0) {
-    return LCC_BAD_INPUT;
-  }
-  LccImage image = { width, height, rgb };
-  LccFound found;
-  memset(&found, 0, sizeof(found));
-  found.version = version;
-  found.N = N;
-  found.s = module_size;
-  found.score = 1;
-  found.has_h = 1;
-  found.axis = 0;
-  found.H[0] = h0; found.H[1] = h1; found.H[2] = h2;
-  found.H[3] = h3; found.H[4] = h4; found.H[5] = h5;
-  found.H[6] = h6; found.H[7] = h7; found.H[8] = h8;
-  uint8_t *payload = NULL;
-  int payload_len = 0;
-  LccDecodeMeta meta;
-  memset(&meta, 0, sizeof(meta));
-  lcc_debug_reset();
-  const int status = lcc_debug_decode_forced(
-    &image, &found, variant ? "otsu" : "value-otsu", &payload, &payload_len, &meta
-  );
-  lcc_debug_stop();
-  lcc_release(payload);
-  return publish_debug_symbols(status, &meta);
-}
 
 int lcc_api_stack(const uint8_t *input, int input_len) {
   if (!input || input_len < 20) return LCC_BAD_INPUT;

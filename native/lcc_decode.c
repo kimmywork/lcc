@@ -947,8 +947,6 @@ static int *g_dbg_row = NULL;
 static int *g_dbg_col = NULL;
 static int *g_dbg_grid = NULL;
 static int *g_dbg_shape = NULL;
-static int *g_dbg_symbol = NULL;
-static int g_dbg_last_slot = -1;
 static float *g_dbg_res = NULL;
 
 void lcc_debug_reset(void) {
@@ -957,11 +955,10 @@ void lcc_debug_reset(void) {
     g_dbg_col = lcc_alloc((size_t)LCC_DEBUG_MAX * sizeof(int));
     g_dbg_grid = lcc_alloc((size_t)LCC_DEBUG_MAX * sizeof(int));
     g_dbg_shape = lcc_alloc((size_t)LCC_DEBUG_MAX * sizeof(int));
-    g_dbg_symbol = lcc_alloc((size_t)LCC_DEBUG_MAX * sizeof(int));
     g_dbg_res = lcc_alloc((size_t)LCC_DEBUG_MAX * 256 * sizeof(float));
   }
   g_dbg_count = 0;
-  g_dbg_capture = g_dbg_res && g_dbg_row && g_dbg_col && g_dbg_grid && g_dbg_shape && g_dbg_symbol;
+  g_dbg_capture = g_dbg_res && g_dbg_row && g_dbg_col && g_dbg_grid && g_dbg_shape;
 }
 
 void lcc_debug_stop(void) {
@@ -980,11 +977,6 @@ int lcc_debug_get(int index, int *row, int *col, int *grid_n, int *shape, float 
   if (shape) *shape = g_dbg_shape[index];
   if (res) memcpy(res, g_dbg_res + (size_t)index * 256, 256 * sizeof(float));
   return 1;
-}
-
-int lcc_debug_get_symbol(int index) {
-  if (index < 0 || index >= g_dbg_count) return -1;
-  return g_dbg_symbol[index];
 }
 
 static void make_model_input(const double *res, int grid_n, double *in16) {
@@ -1045,7 +1037,6 @@ static int match_shape(
   int module_col
 ) {
   const int count = grid_n * grid_n;
-  g_dbg_last_slot = -1;
   background_majority(grid, count, background);
   int bg_rgb[3] = { background[0], background[1], background[2] };
   const double bg_l = lcc_luminance(bg_rgb);
@@ -1065,8 +1056,6 @@ static int match_shape(
     g_dbg_col[dbg_slot] = module_col;
     g_dbg_grid[dbg_slot] = grid_n;
     g_dbg_shape[dbg_slot] = -1;
-    g_dbg_symbol[dbg_slot] = -1;
-    g_dbg_last_slot = dbg_slot;
     for (int i = 0; i < 256; i++) g_dbg_res[(size_t)dbg_slot * 256 + i] = (float)in16[i];
   }
 
@@ -1515,7 +1504,6 @@ static int decode_found(
       raw_sample(image, found, row, col, raw);
       normalize_rgb(&illum, raw, row, col, rgb);
       symbols[i] = classify_color(&cal, palette, rgb, found->threshold);
-      if (g_dbg_capture && g_dbg_last_slot >= 0) g_dbg_symbol[g_dbg_last_slot] = symbols[i];
       continue;
     }
     if (row != loaded_row) {
@@ -1559,7 +1547,6 @@ static int decode_found(
     }
     const int color = classify_color(&cal, palette, background, found->threshold);
     symbols[i] = shape * palette->palette_size + color;
-    if (g_dbg_capture && g_dbg_last_slot >= 0) g_dbg_symbol[g_dbg_last_slot] = symbols[i];
   }
   for (int s = 1; s < shape_set; s++) lcc_release(masks[s]);
   lcc_release(grid);
