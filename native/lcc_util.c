@@ -239,3 +239,51 @@ int lcc_solve(const double *A, const double *b, int n, double *out) {
   lcc_release(M);
   return 1;
 }
+
+/*
+ * Estimate a gray-world per-channel gain and return a corrected copy.
+ * Used only as a retry after the normal decode fails, so it cannot regress
+ * frames that already decode.
+ */
+int lcc_white_balance_copy(const LccImage *src, LccImage *dst) {
+  if (!src || !src->data || src->width <= 0 || src->height <= 0) return 0;
+  uint64_t sr = 0, sg = 0, sb = 0;
+  uint64_t n = 0;
+  const size_t pixels = (size_t)src->width * (size_t)src->height;
+  for (size_t i = 0; i < pixels; i += 4) {
+    const uint8_t *p = src->data + i * 3;
+    sr += p[0];
+    sg += p[1];
+    sb += p[2];
+    n++;
+  }
+  if (n == 0 || sr == 0 || sg == 0 || sb == 0) return 0;
+  const double mr = (double)sr / (double)n;
+  const double mg = (double)sg / (double)n;
+  const double mb = (double)sb / (double)n;
+  const double target = (mr + mg + mb) / 3.0;
+  double g[3] = { target / mr, target / mg, target / mb };
+  for (int c = 0; c < 3; c++) {
+    if (g[c] < 0.75) g[c] = 0.75;
+    if (g[c] > 1.35) g[c] = 1.35;
+  }
+  if (fabs(g[0] - 1) < 0.005 && fabs(g[1] - 1) < 0.005 && fabs(g[2] - 1) < 0.005) {
+    return 0;
+  }
+  uint8_t *data = lcc_alloc(pixels * 3);
+  if (!data) return 0;
+  for (size_t i = 0; i < pixels; i++) {
+    const uint8_t *p = src->data + i * 3;
+    uint8_t *q = data + i * 3;
+    for (int c = 0; c < 3; c++) {
+      int v = (int)lcc_js_round((double)p[c] * g[c]);
+      if (v < 0) v = 0;
+      if (v > 255) v = 255;
+      q[c] = (uint8_t)v;
+    }
+  }
+  dst->width = src->width;
+  dst->height = src->height;
+  dst->data = data;
+  return 1;
+}

@@ -3,6 +3,8 @@
 
 #include "lcc.h"
 
+int lcc_white_balance_copy(const LccImage *src, LccImage *dst);
+
 int lcc_solve(const double *A, const double *b, int n, double *out);
 
 void lcc_rgb_to_lab(const int rgb[3], double lab[3]);

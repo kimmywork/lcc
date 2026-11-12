@@ -1679,7 +1679,7 @@ static int try_name(
   return status;
 }
 
-int lcc_decode_image(const LccImage *image, int mode, uint8_t **payload, int *payload_len, LccDecodeMeta *meta) {
+static int decode_image_impl(const LccImage *image, int mode, uint8_t **payload, int *payload_len, LccDecodeMeta *meta, int persp_limit) {
   if (!image || !image->data || image->width <= 0 || image->height <= 0) return LCC_BAD_INPUT;
   LccPrep prep;
   if (!lcc_prep_init(&prep, image)) return LCC_ERR;
@@ -1696,6 +1696,7 @@ int lcc_decode_image(const LccImage *image, int mode, uint8_t **payload, int *pa
   }
   if (mode == 0 || mode == 2) {
     for (size_t i = 0; i < sizeof(PERSP_NAMES) / sizeof(PERSP_NAMES[0]); i++) {
+      if ((int)i >= persp_limit) break;
       const int status = try_name(image, &prep, PERSP_NAMES[i], 1, payload, payload_len, meta);
       if (status == LCC_OK) {
         lcc_prep_free(&prep);
@@ -1784,7 +1785,7 @@ static void found_from_det(const LccDet *det, LccFound *found) {
   found->origin_y = det->origin_y;
 }
 
-int lcc_scan_frames(
+static int scan_frames_impl(
   const LccImage *frames,
   int count,
   uint8_t **payload,
@@ -1858,4 +1859,41 @@ int lcc_scan_frames(
   lcc_release(dets);
   lcc_release(variants);
   return status;
+}
+
+int lcc_decode_image(const LccImage *image, int mode, uint8_t **payload, int *payload_len, LccDecodeMeta *meta) {
+  const int status = decode_image_impl(image, mode, payload, payload_len, meta, 12);
+  if (status == LCC_OK || !image || mode == 1) return status;
+  LccImage balanced;
+  memset(&balanced, 0, sizeof(balanced));
+  if (!lcc_white_balance_copy(image, &balanced)) return status;
+  const int retry = decode_image_impl(&balanced, mode, payload, payload_len, meta, 12);
+  lcc_release((void *)balanced.data);
+  return retry;
+}
+
+int lcc_scan_frames(
+  const LccImage *frames,
+  int count,
+  uint8_t **payload,
+  int *payload_len,
+  LccDecodeMeta *meta
+) {
+  const int status = scan_frames_impl(frames, count, payload, payload_len, meta);
+  if (status == LCC_OK || !frames || count <= 0 || count > 8) return status;
+  LccImage balanced[8];
+  memset(balanced, 0, sizeof(balanced));
+  int n = 0;
+  for (int i = 0; i < count; i++) {
+    if (lcc_white_balance_copy(&frames[i], &balanced[n])) n++;
+  }
+  if (n == 0) return status;
+  const int retry = scan_frames_impl(balanced, n, payload, payload_len, meta);
+  for (int i = 0; i < n; i++) lcc_release((void *)balanced[i].data);
+  if (retry == LCC_OK) return retry;
+  for (int i = 0; i < count; i++) {
+    const int full = decode_image_impl(&frames[i], 2, payload, payload_len, meta, 10);
+    if (full == LCC_OK) return full;
+  }
+  return retry;
 }
