@@ -3,6 +3,8 @@
 
 #include "lcc.h"
 
+int lcc_white_balance_copy(const LccImage *src, LccImage *dst);
+
 int lcc_solve(const double *A, const double *b, int n, double *out);
 
 void lcc_rgb_to_lab(const int rgb[3], double lab[3]);
@@ -86,5 +88,13 @@ typedef struct {
 
 int lcc_detect_axis(const LccImage *image, const LccVariant *variant, LccFound *found);
 int lcc_detect_perspective(const LccImage *image, const LccVariant *variant, LccFound *found);
+int lcc_debug_decode_forced(
+  const LccImage *image,
+  const LccFound *found,
+  const char *variant_name,
+  uint8_t **payload,
+  int *payload_len,
+  LccDecodeMeta *meta
+);
 
 #endif

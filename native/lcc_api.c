@@ -1,4 +1,4 @@
-#include "lcc.h"
+#include "lcc_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -39,6 +39,97 @@ static void wr_u32(uint8_t *p, uint32_t v) {
 static void wr_f64(uint8_t *p, double v) {
   memcpy(p, &v, 8);
 }
+
+static void wr_f32(uint8_t *p, float v) {
+  memcpy(p, &v, 4);
+}
+
+static int reject_debug_residuals(int status) {
+  uint8_t *out = lcc_alloc(4);
+  if (out) {
+    memset(out, 0, 4);
+    set_last(out, 4);
+  } else {
+    set_last(NULL, 0);
+  }
+  return status;
+}
+
+static int publish_debug_residuals(int status) {
+  const int count = lcc_debug_count();
+  const int record = 16 + 256 * 4;
+  uint8_t *out = lcc_alloc((size_t)4 + (size_t)count * (size_t)record);
+  if (!out) return LCC_ERR;
+  wr_u32(out, (uint32_t)count);
+  float res[256];
+  for (int i = 0; i < count; i++) {
+    int row = 0, col = 0, grid_n = 0, shape = -1;
+    lcc_debug_get(i, &row, &col, &grid_n, &shape, res);
+    uint8_t *p = out + 4 + (size_t)i * (size_t)record;
+    wr_u32(p + 0, (uint32_t)row);
+    wr_u32(p + 4, (uint32_t)col);
+    wr_u32(p + 8, (uint32_t)grid_n);
+    wr_u32(p + 12, (uint32_t)shape);
+    for (int k = 0; k < 256; k++) wr_f32(p + 16 + k * 4, res[k]);
+  }
+  set_last(out, 4 + count * record);
+  return status;
+}
+
+
+int lcc_api_debug_residuals(const uint8_t *rgb, int width, int height, int mode) {
+  if (!rgb || width <= 0 || height <= 0) return reject_debug_residuals(LCC_BAD_INPUT);
+  LccImage image = { width, height, rgb };
+  uint8_t *payload = NULL;
+  int payload_len = 0;
+  LccDecodeMeta meta;
+  memset(&meta, 0, sizeof(meta));
+  lcc_debug_reset();
+  const int status = lcc_decode_image(&image, mode, &payload, &payload_len, &meta);
+  lcc_debug_stop();
+  lcc_release(payload);
+  return publish_debug_residuals(status);
+}
+
+int lcc_api_debug_residuals_h(
+  const uint8_t *rgb,
+  int width,
+  int height,
+  double h0, double h1, double h2,
+  double h3, double h4, double h5,
+  double h6, double h7, double h8,
+  int version,
+  int N,
+  int module_size
+) {
+  if (!rgb || width <= 0 || height <= 0 || version < 1 || N < 21 || module_size <= 0) {
+    return reject_debug_residuals(LCC_BAD_INPUT);
+  }
+  LccImage image = { width, height, rgb };
+  LccFound found;
+  memset(&found, 0, sizeof(found));
+  found.version = version;
+  found.N = N;
+  found.s = module_size;
+  found.score = 1;
+  found.has_h = 1;
+  found.axis = 0;
+  found.H[0] = h0; found.H[1] = h1; found.H[2] = h2;
+  found.H[3] = h3; found.H[4] = h4; found.H[5] = h5;
+  found.H[6] = h6; found.H[7] = h7; found.H[8] = h8;
+  uint8_t *payload = NULL;
+  int payload_len = 0;
+  LccDecodeMeta meta;
+  memset(&meta, 0, sizeof(meta));
+  lcc_debug_reset();
+  const int status = lcc_debug_decode_forced(
+    &image, &found, "value-otsu", &payload, &payload_len, &meta
+  );
+  lcc_debug_stop();
+  lcc_release(payload);
+  return publish_debug_residuals(status);
+}
+
 
 int lcc_api_stack(const uint8_t *input, int input_len) {
   if (!input || input_len < 20) return LCC_BAD_INPUT;

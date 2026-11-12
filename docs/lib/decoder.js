@@ -338,6 +338,7 @@ export function decode(image, options = {}) {
         lineWidth: shapeLineWidthGrid,
         inset: shapeInsetGrid,
         sharpen: (det.s || 0) < 12,
+        shapeCount: layer.shapeSetSize,
       });
       const background = shapeResult.shape === 0
         ? shapeResult.background

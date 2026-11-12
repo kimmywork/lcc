@@ -188,6 +188,62 @@ export const LAYERS = {
     minModulePx: 16,
     description: '16 max-min colors + 8 shapes',
   },
+
+  // --- rich shape ladder (32 symbols) ---------------------------------------
+  // The 32-shape set adds 5 bit/module.  These layers are for clean/digital
+  // and controlled print, not for hand-held camera capture.  Module size 16 px
+  // is the minimum we recommend for the thin arrows / T variants.
+  L3u: {
+    id: 7,
+    name: 'L3u',
+    kind: 'color',
+    colors: 32,
+    paletteSize: 32,
+    bitsPerModule: 10,
+    ecc: 0.35,
+    defaultConstraint: false,
+    camera: false,
+    shapeSetSize: 32,
+    shapeLayerId: 0,
+    shapeExt: 1,
+    minVersion: 2,
+    minModulePx: 16,
+    description: '32 max-min colors + 32 shapes (controlled print/digital)',
+  },
+  L4eS: {
+    id: 7,
+    name: 'L4eS',
+    kind: 'color',
+    colors: 64,
+    paletteSize: 64,
+    bitsPerModule: 11,
+    ecc: 0.40,
+    defaultConstraint: false,
+    camera: false,
+    shapeSetSize: 32,
+    shapeLayerId: 1,
+    shapeExt: 1,
+    minVersion: 2,
+    minModulePx: 16,
+    description: '64 max-min colors + 32 shapes (digital/print)',
+  },
+  L4fS: {
+    id: 7,
+    name: 'L4fS',
+    kind: 'color',
+    colors: 256,
+    paletteSize: 256,
+    bitsPerModule: 13,
+    ecc: 0.40,
+    defaultConstraint: false,
+    camera: false,
+    shapeSetSize: 32,
+    shapeLayerId: 2,
+    shapeExt: 1,
+    minVersion: 4,
+    minModulePx: 16,
+    description: '256 max-min colors + 32 shapes (clean digital/print)',
+  },
 };
 
 // Shape layers use the mode=7 escape and are not addressable by a 3-bit mode
@@ -205,8 +261,16 @@ export const SHAPE_LAYER_BY_ID = new Map([
   [3, 'L3s'],
 ]);
 
+// The shape-extension bit selects the richer branch: L3t / L3u / L4eS / L4fS.
+export const SHAPE_LAYER_EXT_BY_ID = new Map([
+  [0, 'L3u'],
+  [1, 'L4eS'],
+  [2, 'L4fS'],
+  [3, 'L3t'],
+]);
+
 export function resolveShapeLayer(shapeLayerId, shapeExt = 0) {
-  if (shapeLayerId === 3 && shapeExt) return 'L3t';
+  if (shapeExt) return SHAPE_LAYER_EXT_BY_ID.get(shapeLayerId) ?? null;
   return SHAPE_LAYER_BY_ID.get(shapeLayerId) ?? null;
 }
 

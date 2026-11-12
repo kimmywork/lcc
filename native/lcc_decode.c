@@ -180,7 +180,13 @@ static int read_format(const LccImage *image, const LccFound *found, const LccVa
 
 static const char *layer_name_of(const FormatInfo *fmt) {
   if (fmt->mode_id == 7) {
-    if (fmt->shape_layer_id == 3 && fmt->shape_ext) return "L3t";
+    if (fmt->shape_ext) {
+      if (fmt->shape_layer_id == 0) return "L3u";
+      if (fmt->shape_layer_id == 1) return "L4eS";
+      if (fmt->shape_layer_id == 2) return "L4fS";
+      if (fmt->shape_layer_id == 3) return "L3t";
+      return NULL;
+    }
     if (fmt->shape_layer_id == 0) return "L3b";
     if (fmt->shape_layer_id == 1) return "L1s";
     if (fmt->shape_layer_id == 2) return "L2s";
@@ -601,8 +607,12 @@ static void shape_mask(int shape, int size, int line, int inset, uint8_t *mask) 
   const double square = inset > (int)lcc_js_round(size / 4.0) ? inset : (int)lcc_js_round(size / 4.0);
   const double slo = square;
   const double shi = size - square;
+  const double head = (inset * 2.0) > (size / 6.0) ? (inset * 2.0) : (size / 6.0);
+  const double gap = (size * 0.08) > inset ? (size * 0.08) : inset;
   double segs[4][4];
   int nseg = 0;
+  double rects[4][4];
+  int nrect = 0;
   if (shape == 1) {
     segs[0][0] = lo; segs[0][1] = hi; segs[0][2] = hi; segs[0][3] = lo; nseg = 1;
   } else if (shape == 2) {
@@ -623,15 +633,101 @@ static void shape_mask(int shape, int size, int line, int inset, uint8_t *mask) 
     segs[2][0] = shi; segs[2][1] = shi; segs[2][2] = slo; segs[2][3] = shi;
     segs[3][0] = slo; segs[3][1] = shi; segs[3][2] = slo; segs[3][3] = slo;
     nseg = 4;
+  } else if (shape == 8) {
+    segs[0][0] = lo; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = lo;
+    segs[1][0] = lo; segs[1][1] = mid; segs[1][2] = hi; segs[1][3] = hi; nseg = 2;
+  } else if (shape == 9) {
+    segs[0][0] = hi; segs[0][1] = mid; segs[0][2] = lo; segs[0][3] = lo;
+    segs[1][0] = hi; segs[1][1] = mid; segs[1][2] = lo; segs[1][3] = hi; nseg = 2;
+  } else if (shape == 10) {
+    segs[0][0] = mid; segs[0][1] = hi; segs[0][2] = lo; segs[0][3] = lo;
+    segs[1][0] = mid; segs[1][1] = hi; segs[1][2] = hi; segs[1][3] = lo; nseg = 2;
+  } else if (shape == 11) {
+    segs[0][0] = mid; segs[0][1] = lo; segs[0][2] = lo; segs[0][3] = hi;
+    segs[1][0] = mid; segs[1][1] = lo; segs[1][2] = hi; segs[1][3] = hi; nseg = 2;
+  } else if (shape == 12) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = lo; segs[0][3] = mid;
+    segs[1][0] = lo; segs[1][1] = mid; segs[1][2] = lo + head; segs[1][3] = mid - head;
+    segs[2][0] = lo; segs[2][1] = mid; segs[2][2] = lo + head; segs[2][3] = mid + head; nseg = 3;
+  } else if (shape == 13) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = mid; segs[0][3] = lo;
+    segs[1][0] = mid; segs[1][1] = lo; segs[1][2] = mid - head; segs[1][3] = lo + head;
+    segs[2][0] = mid; segs[2][1] = lo; segs[2][2] = mid + head; segs[2][3] = lo + head; nseg = 3;
+  } else if (shape == 14) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = mid;
+    segs[1][0] = hi; segs[1][1] = mid; segs[1][2] = hi - head; segs[1][3] = mid - head;
+    segs[2][0] = hi; segs[2][1] = mid; segs[2][2] = hi - head; segs[2][3] = mid + head; nseg = 3;
+  } else if (shape == 15) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = mid; segs[0][3] = hi;
+    segs[1][0] = mid; segs[1][1] = hi; segs[1][2] = mid - head; segs[1][3] = hi - head;
+    segs[2][0] = mid; segs[2][1] = hi; segs[2][2] = mid + head; segs[2][3] = hi - head; nseg = 3;
+  } else if (shape == 16) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = lo; segs[0][3] = lo;
+    segs[1][0] = lo; segs[1][1] = lo; segs[1][2] = lo + head; segs[1][3] = lo;
+    segs[2][0] = lo; segs[2][1] = lo; segs[2][2] = lo; segs[2][3] = lo + head; nseg = 3;
+  } else if (shape == 17) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = lo;
+    segs[1][0] = hi; segs[1][1] = lo; segs[1][2] = hi - head; segs[1][3] = lo;
+    segs[2][0] = hi; segs[2][1] = lo; segs[2][2] = hi; segs[2][3] = lo + head; nseg = 3;
+  } else if (shape == 18) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = hi;
+    segs[1][0] = hi; segs[1][1] = hi; segs[1][2] = hi - head; segs[1][3] = hi;
+    segs[2][0] = hi; segs[2][1] = hi; segs[2][2] = hi; segs[2][3] = hi - head; nseg = 3;
+  } else if (shape == 19) {
+    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = lo; segs[0][3] = hi;
+    segs[1][0] = lo; segs[1][1] = hi; segs[1][2] = lo + head; segs[1][3] = hi;
+    segs[2][0] = lo; segs[2][1] = hi; segs[2][2] = lo; segs[2][3] = hi - head; nseg = 3;
+  } else if (shape == 20) {
+    rects[0][0] = lo; rects[0][1] = lo; rects[0][2] = mid - gap; rects[0][3] = mid - gap; nrect = 1;
+  } else if (shape == 21) {
+    rects[0][0] = mid + gap; rects[0][1] = lo; rects[0][2] = hi; rects[0][3] = mid - gap; nrect = 1;
+  } else if (shape == 22) {
+    rects[0][0] = lo; rects[0][1] = mid + gap; rects[0][2] = mid - gap; rects[0][3] = hi; nrect = 1;
+  } else if (shape == 23) {
+    rects[0][0] = mid + gap; rects[0][1] = mid + gap; rects[0][2] = hi; rects[0][3] = hi; nrect = 1;
+  } else if (shape == 24) {
+    segs[0][0] = lo; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = mid;
+    segs[1][0] = mid; segs[1][1] = mid; segs[1][2] = mid; segs[1][3] = hi; nseg = 2;
+  } else if (shape == 25) {
+    segs[0][0] = mid; segs[0][1] = lo; segs[0][2] = mid; segs[0][3] = hi;
+    segs[1][0] = mid; segs[1][1] = mid; segs[1][2] = hi; segs[1][3] = mid; nseg = 2;
+  } else if (shape == 26) {
+    segs[0][0] = mid; segs[0][1] = lo; segs[0][2] = mid; segs[0][3] = hi;
+    segs[1][0] = lo; segs[1][1] = mid; segs[1][2] = mid; segs[1][3] = mid; nseg = 2;
+  } else if (shape == 27) {
+    segs[0][0] = lo; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = mid;
+    segs[1][0] = mid; segs[1][1] = lo; segs[1][2] = mid; segs[1][3] = mid; nseg = 2;
+  } else if (shape == 28) {
+    segs[0][0] = lo; segs[0][1] = hi; segs[0][2] = hi; segs[0][3] = lo;
+    segs[1][0] = mid; segs[1][1] = mid; segs[1][2] = lo; segs[1][3] = lo; nseg = 2;
+  } else if (shape == 29) {
+    segs[0][0] = lo; segs[0][1] = hi; segs[0][2] = hi; segs[0][3] = lo;
+    segs[1][0] = mid; segs[1][1] = mid; segs[1][2] = hi; segs[1][3] = hi; nseg = 2;
+  } else if (shape == 30) {
+    segs[0][0] = lo; segs[0][1] = lo; segs[0][2] = hi; segs[0][3] = hi;
+    segs[1][0] = mid; segs[1][1] = mid; segs[1][2] = hi; segs[1][3] = lo; nseg = 2;
+  } else if (shape == 31) {
+    segs[0][0] = lo; segs[0][1] = lo; segs[0][2] = hi; segs[0][3] = hi;
+    segs[1][0] = mid; segs[1][1] = mid; segs[1][2] = lo; segs[1][3] = hi; nseg = 2;
   }
   const double half = line / 2.0 > 0.5 ? line / 2.0 : 0.5;
   for (int y = 0; y < size; y++) {
     for (int x = 0; x < size; x++) {
+      const double px = x + 0.5;
+      const double py = y + 0.5;
       int on = 0;
-      for (int s = 0; s < nseg; s++) {
-        if (dist_seg(x + 0.5, y + 0.5, segs[s][0], segs[s][1], segs[s][2], segs[s][3]) <= half) {
+      for (int r = 0; r < nrect; r++) {
+        if (px >= rects[r][0] && px <= rects[r][2] && py >= rects[r][1] && py <= rects[r][3]) {
           on = 1;
           break;
+        }
+      }
+      if (!on) {
+        for (int s = 0; s < nseg; s++) {
+          if (dist_seg(px, py, segs[s][0], segs[s][1], segs[s][2], segs[s][3]) <= half) {
+            on = 1;
+            break;
+          }
         }
       }
       mask[y * size + x] = (uint8_t)on;
@@ -817,7 +913,129 @@ static double ncc_vec(const double *res, const double *mask, int count) {
   return v < 0 ? -v : v;
 }
 
-static int match_shape(const int *grid, int grid_n, const double *planes, int stride, int sharpen, int background[3]) {
+static void resample_double(const double *src, int n, int dn, double *dst) {
+  const double scale = (double)n / (double)dn;
+  for (int y = 0; y < dn; y++) {
+    double fy = ((double)y + 0.5) * scale - 0.5;
+    if (fy < 0) fy = 0;
+    if (fy > n - 1) fy = n - 1;
+    const int y0 = (int)floor(fy);
+    const int y1 = y0 + 1 < n ? y0 + 1 : y0;
+    const double ty = fy - y0;
+    for (int x = 0; x < dn; x++) {
+      double fx = ((double)x + 0.5) * scale - 0.5;
+      if (fx < 0) fx = 0;
+      if (fx > n - 1) fx = n - 1;
+      const int x0 = (int)floor(fx);
+      const int x1 = x0 + 1 < n ? x0 + 1 : x0;
+      const double tx = fx - x0;
+      const double a = src[y0 * n + x0];
+      const double b = src[y0 * n + x1];
+      const double c = src[y1 * n + x0];
+      const double d = src[y1 * n + x1];
+      dst[y * dn + x] = a * (1 - tx) * (1 - ty) + b * tx * (1 - ty) + c * (1 - tx) * ty + d * tx * ty;
+    }
+  }
+}
+
+static void normalize_double(double *v, int n);
+
+#define LCC_DEBUG_MAX 8192
+static int g_dbg_capture = 0;
+static int g_dbg_count = 0;
+static int *g_dbg_row = NULL;
+static int *g_dbg_col = NULL;
+static int *g_dbg_grid = NULL;
+static int *g_dbg_shape = NULL;
+static float *g_dbg_res = NULL;
+
+void lcc_debug_reset(void) {
+  if (!g_dbg_res) {
+    g_dbg_row = lcc_alloc((size_t)LCC_DEBUG_MAX * sizeof(int));
+    g_dbg_col = lcc_alloc((size_t)LCC_DEBUG_MAX * sizeof(int));
+    g_dbg_grid = lcc_alloc((size_t)LCC_DEBUG_MAX * sizeof(int));
+    g_dbg_shape = lcc_alloc((size_t)LCC_DEBUG_MAX * sizeof(int));
+    g_dbg_res = lcc_alloc((size_t)LCC_DEBUG_MAX * 256 * sizeof(float));
+  }
+  g_dbg_count = 0;
+  g_dbg_capture = g_dbg_res && g_dbg_row && g_dbg_col && g_dbg_grid && g_dbg_shape;
+}
+
+void lcc_debug_stop(void) {
+  g_dbg_capture = 0;
+}
+
+int lcc_debug_count(void) {
+  return g_dbg_count;
+}
+
+int lcc_debug_get(int index, int *row, int *col, int *grid_n, int *shape, float *res) {
+  if (index < 0 || index >= g_dbg_count) return 0;
+  if (row) *row = g_dbg_row[index];
+  if (col) *col = g_dbg_col[index];
+  if (grid_n) *grid_n = g_dbg_grid[index];
+  if (shape) *shape = g_dbg_shape[index];
+  if (res) memcpy(res, g_dbg_res + (size_t)index * 256, 256 * sizeof(float));
+  return 1;
+}
+
+static void make_model_input(const double *res, int grid_n, double *in16) {
+  double border[256];
+  int nb = 0;
+  for (int x = 0; x < grid_n; x++) {
+    border[nb++] = res[x];
+    if (grid_n > 1) border[nb++] = res[(grid_n - 1) * grid_n + x];
+  }
+  for (int y = 1; y + 1 < grid_n; y++) {
+    border[nb++] = res[y * grid_n];
+    border[nb++] = res[y * grid_n + grid_n - 1];
+  }
+  for (int i = 1; i < nb; i++) {
+    const double key = border[i];
+    int j = i - 1;
+    while (j >= 0 && border[j] > key) {
+      border[j + 1] = border[j];
+      j--;
+    }
+    border[j + 1] = key;
+  }
+  const double border_level = nb > 0 ? border[nb / 2] : 0;
+  double res_sr[256];
+  for (int i = 0; i < grid_n * grid_n; i++) res_sr[i] = res[i] - border_level;
+  resample_double(res_sr, grid_n, 16, in16);
+  normalize_double(in16, 256);
+}
+
+static void normalize_double(double *v, int n) {
+  double mean = 0;
+  for (int i = 0; i < n; i++) mean += v[i];
+  mean /= n;
+  double var = 0;
+  for (int i = 0; i < n; i++) {
+    const double d = v[i] - mean;
+    var += d * d;
+  }
+  const double std = sqrt(var / n);
+  if (std < 1e-6) {
+    for (int i = 0; i < n; i++) v[i] = 0;
+    return;
+  }
+  for (int i = 0; i < n; i++) v[i] = (v[i] - mean) / std;
+}
+
+static int match_shape(
+  const int *grid,
+  int grid_n,
+  const double *planes,
+  int stride,
+  int sharpen,
+  int background[3],
+  const double *planes_model,
+  int model_stride,
+  int shape_set,
+  int module_row,
+  int module_col
+) {
   const int count = grid_n * grid_n;
   background_majority(grid, count, background);
   int bg_rgb[3] = { background[0], background[1], background[2] };
@@ -827,16 +1045,67 @@ static int match_shape(const int *grid, int grid_n, const double *planes, int st
     int rgb[3] = { grid[i * 3], grid[i * 3 + 1], grid[i * 3 + 2] };
     res[i] = lcc_luminance(rgb) - bg_l;
   }
+
+  double in16[256];
+  if (shape_set <= 8 || g_dbg_capture) make_model_input(res, grid_n, in16);
+
+  int dbg_slot = -1;
+  if (g_dbg_capture && g_dbg_count < LCC_DEBUG_MAX) {
+    dbg_slot = g_dbg_count++;
+    g_dbg_row[dbg_slot] = module_row;
+    g_dbg_col[dbg_slot] = module_col;
+    g_dbg_grid[dbg_slot] = grid_n;
+    g_dbg_shape[dbg_slot] = -1;
+    for (int i = 0; i < 256; i++) g_dbg_res[(size_t)dbg_slot * 256 + i] = (float)in16[i];
+  }
+
+  if (shape_set <= 8 && planes_model) {
+    // Cheap 16x16 template gate: skip the network when the correlation is
+    // strong and unambiguous.
+    if (planes_model) {
+      int cheap = 0;
+      double b1 = 0;
+      double b2 = 0;
+      for (int s = 1; s < 8; s++) {
+        const double *base = planes_model + (size_t)(s - 1) * 9 * (size_t)model_stride;
+        const double score = fabs(ncc_vec(in16, base + 4 * (size_t)model_stride, 256));
+        if (score > b1) {
+          b2 = b1;
+          b1 = score;
+          cheap = s;
+        } else if (score > b2) {
+          b2 = score;
+        }
+      }
+      if (b1 < 0.32) cheap = 0;
+      if (b1 >= 0.55 && b1 - b2 >= 0.10) {
+        if (dbg_slot >= 0) g_dbg_shape[dbg_slot] = cheap;
+        return cheap;
+      }
+    }
+    float x[256];
+    float logits[8];
+    for (int i = 0; i < 256; i++) x[i] = (float)in16[i];
+    lcc_shape_forward(x, logits);
+    int shape = 0;
+    for (int k = 1; k < 8; k++) {
+      if (logits[k] > logits[shape]) shape = k;
+    }
+    if (dbg_slot >= 0) g_dbg_shape[dbg_slot] = shape;
+    return shape;
+  }
+
+  // 32-shape digital/print layers use the analytic templates.
   if (sharpen) sharpen_residual(res, grid_n);
   int shape = 0;
   double best = 0;
-  for (int s = 1; s < 8; s++) {
+  for (int s = 1; s < shape_set; s++) {
     const double *base = planes + (size_t)(s - 1) * 9 * (size_t)stride;
-    double score = ncc_vec(res, base + 4 * (size_t)stride, count);
+    double score = fabs(ncc_vec(res, base + 4 * (size_t)stride, count));
     if (score < 0.72) {
       for (int shift = 0; shift < 9; shift++) {
         if (shift == 4) continue;
-        const double candidate = ncc_vec(res, base + (size_t)shift * (size_t)stride, count);
+        const double candidate = fabs(ncc_vec(res, base + (size_t)shift * (size_t)stride, count));
         if (candidate > score) score = candidate;
       }
     }
@@ -846,6 +1115,7 @@ static int match_shape(const int *grid, int grid_n, const double *planes, int st
     }
   }
   if (best < 0.32) shape = 0;
+  if (dbg_slot >= 0) g_dbg_shape[dbg_slot] = shape;
   return shape;
 }
 
@@ -1093,16 +1363,26 @@ static int decode_found(
   build_calibrator(palette, &layout, image, found, &illum, &cal);
 
   const int D = layout.data_count;
+  if (meta) {
+    meta->version = found->version;
+    meta->N = layout.N;
+    meta->module_size = found->s;
+    meta->data_count = D;
+    meta->format_blocks = layout.blocks;
+    meta->shape_set = palette->shape_set > 0 ? palette->shape_set : 1;
+    strncpy(meta->layer, palette->name, sizeof(meta->layer) - 1);
+  }
   int *symbols = lcc_alloc((size_t)D * sizeof(int));
   if (!symbols) {
     lcc_layout_free(&layout);
     return LCC_ERR;
   }
   const int patterns = palette->shape_set > 1;
+  const int shape_set = palette->shape_set > 1 ? palette->shape_set : 1;
   int grid_n = 0;
   int line = 0;
   int inset = 0;
-  uint8_t *masks[8] = { 0 };
+  uint8_t *masks[33] = { 0 };
   int *grid = NULL;
   if (patterns) {
     grid_n = (int)lcc_js_round(found->s > 0 ? found->s : 12);
@@ -1114,7 +1394,7 @@ static int decode_found(
     inset = (int)lcc_js_round((double)(inset_px < 1 ? 1 : inset_px) * grid_n / found->s);
     if (line < 1) line = 1;
     if (inset < 1) inset = 1;
-    for (int s = 1; s < 8; s++) {
+    for (int s = 1; s < shape_set; s++) {
       masks[s] = lcc_alloc((size_t)grid_n * grid_n);
       shape_mask(s, grid_n, line, inset, masks[s]);
     }
@@ -1125,15 +1405,18 @@ static int decode_found(
   double *planes = NULL;
   uint8_t *band = NULL;
   int *order = NULL;
+  const int model_n = 16;
+  int model_stride = 0;
+  double *planes_model = NULL;
   if (patterns) {
     const int count = grid_n * grid_n;
     plane_stride = (count + 1) & ~1;
     step = grid_n * 2;
-    planes = lcc_alloc((size_t)7 * 9 * (size_t)plane_stride * sizeof(double));
+    planes = lcc_alloc((size_t)(shape_set - 1) * 9 * (size_t)plane_stride * sizeof(double));
     band = lcc_alloc((size_t)step * (size_t)layout.N * (size_t)step * 3);
     order = lcc_alloc((size_t)D * sizeof(int));
     if (!grid || !planes || !band || !order) {
-      for (int s = 1; s < 8; s++) lcc_release(masks[s]);
+      for (int s = 1; s < shape_set; s++) lcc_release(masks[s]);
       lcc_release(grid);
       lcc_release(planes);
       lcc_release(band);
@@ -1142,7 +1425,7 @@ static int decode_found(
       lcc_layout_free(&layout);
       return LCC_ERR;
     }
-    for (int s = 1; s < 8; s++) {
+    for (int s = 1; s < shape_set; s++) {
       for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
           double *dst = planes + (((size_t)(s - 1) * 9 + (size_t)((dy + 1) * 3 + (dx + 1))) * (size_t)plane_stride);
@@ -1156,6 +1439,46 @@ static int decode_found(
           }
         }
       }
+    }
+    if (shape_set <= 8 && found->s >= 12.0) {
+      const int model_count = model_n * model_n;
+      model_stride = (model_count + 1) & ~1;
+      planes_model = lcc_alloc((size_t)7 * 9 * (size_t)model_stride * sizeof(double));
+      uint8_t *templ = lcc_alloc((size_t)model_n * model_n);
+      if (!planes_model || !templ) {
+        lcc_release(planes_model);
+        lcc_release(templ);
+        for (int s = 1; s < shape_set; s++) lcc_release(masks[s]);
+        lcc_release(grid);
+        lcc_release(planes);
+        lcc_release(band);
+        lcc_release(order);
+        lcc_release(symbols);
+        lcc_layout_free(&layout);
+        return LCC_ERR;
+      }
+      int line_m = (int)lcc_js_round(model_n / 8.0);
+      int inset_m = (int)lcc_js_round(model_n / 16.0);
+      if (line_m < 1) line_m = 1;
+      if (inset_m < 1) inset_m = 1;
+      for (int s = 1; s < 8; s++) {
+        shape_mask(s, model_n, line_m, inset_m, templ);
+        for (int dy = -1; dy <= 1; dy++) {
+          for (int dx = -1; dx <= 1; dx++) {
+            double *dst = planes_model +
+              (((size_t)(s - 1) * 9 + (size_t)((dy + 1) * 3 + (dx + 1))) * (size_t)model_stride);
+            for (int y = 0; y < model_n; y++) {
+              for (int x = 0; x < model_n; x++) {
+                const int tx = x + dx;
+                const int ty = y + dy;
+                dst[y * model_n + x] = tx >= 0 && ty >= 0 && tx < model_n && ty < model_n
+                  ? templ[ty * model_n + tx] : 0;
+              }
+            }
+          }
+        }
+      }
+      lcc_release(templ);
     }
     for (int i = 0; i < D; i++) order[i] = i;
     for (int a = 1; a < D; a++) {
@@ -1210,7 +1533,10 @@ static int decode_found(
       }
     }
     int majority[3];
-    const int shape = match_shape(grid, grid_n, planes, plane_stride, sharpen, majority);
+    const int shape = match_shape(
+      grid, grid_n, planes, plane_stride, sharpen, majority,
+      planes_model, model_stride, shape_set, row, col
+    );
     int background[3];
     if (shape == 0) {
       background[0] = majority[0];
@@ -1222,9 +1548,10 @@ static int decode_found(
     const int color = classify_color(&cal, palette, background, found->threshold);
     symbols[i] = shape * palette->palette_size + color;
   }
-  for (int s = 1; s < 8; s++) lcc_release(masks[s]);
+  for (int s = 1; s < shape_set; s++) lcc_release(masks[s]);
   lcc_release(grid);
   lcc_release(planes);
+  lcc_release(planes_model);
   lcc_release(band);
   lcc_release(order);
 
@@ -1294,6 +1621,29 @@ static int decode_found(
   return LCC_OK;
 }
 
+int lcc_debug_decode_forced(
+  const LccImage *image,
+  const LccFound *found,
+  const char *variant_name,
+  uint8_t **payload,
+  int *payload_len,
+  LccDecodeMeta *meta
+) {
+  LccPrep prep;
+  if (!lcc_prep_init(&prep, image)) return LCC_ERR;
+  LccVariant variant;
+  if (!lcc_variant_build(&prep, variant_name, &variant)) {
+    lcc_prep_free(&prep);
+    return LCC_ERR;
+  }
+  LccFound local = *found;
+  local.threshold = lcc_threshold_at(&variant, image->width / 2.0, image->height / 2.0);
+  const int status = decode_found(image, &variant, &local, payload, payload_len, meta);
+  lcc_variant_free(&variant);
+  lcc_prep_free(&prep);
+  return status;
+}
+
 static int try_name(
   const LccImage *image,
   LccPrep *prep,
@@ -1303,6 +1653,9 @@ static int try_name(
   int *payload_len,
   LccDecodeMeta *meta
 ) {
+  // Keep only records from this attempt so a successful final decode does not
+  // mix residual samples from earlier failed variants.
+  if (g_dbg_capture) g_dbg_count = 0;
   LccVariant variant;
   if (!lcc_variant_build(prep, name, &variant)) return LCC_ERR;
   LccFound found;
@@ -1315,7 +1668,7 @@ static int try_name(
   return status;
 }
 
-int lcc_decode_image(const LccImage *image, int mode, uint8_t **payload, int *payload_len, LccDecodeMeta *meta) {
+static int decode_image_impl(const LccImage *image, int mode, uint8_t **payload, int *payload_len, LccDecodeMeta *meta, int persp_limit) {
   if (!image || !image->data || image->width <= 0 || image->height <= 0) return LCC_BAD_INPUT;
   LccPrep prep;
   if (!lcc_prep_init(&prep, image)) return LCC_ERR;
@@ -1332,6 +1685,7 @@ int lcc_decode_image(const LccImage *image, int mode, uint8_t **payload, int *pa
   }
   if (mode == 0 || mode == 2) {
     for (size_t i = 0; i < sizeof(PERSP_NAMES) / sizeof(PERSP_NAMES[0]); i++) {
+      if ((int)i >= persp_limit) break;
       const int status = try_name(image, &prep, PERSP_NAMES[i], 1, payload, payload_len, meta);
       if (status == LCC_OK) {
         lcc_prep_free(&prep);
@@ -1420,7 +1774,7 @@ static void found_from_det(const LccDet *det, LccFound *found) {
   found->origin_y = det->origin_y;
 }
 
-int lcc_scan_frames(
+static int scan_frames_impl(
   const LccImage *frames,
   int count,
   uint8_t **payload,
@@ -1494,4 +1848,43 @@ int lcc_scan_frames(
   lcc_release(dets);
   lcc_release(variants);
   return status;
+}
+
+int lcc_decode_image(const LccImage *image, int mode, uint8_t **payload, int *payload_len, LccDecodeMeta *meta) {
+  const int status = decode_image_impl(image, mode, payload, payload_len, meta, 12);
+  if (status == LCC_OK || !image || mode == 1) return status;
+  LccImage balanced;
+  memset(&balanced, 0, sizeof(balanced));
+  if (!lcc_white_balance_copy(image, &balanced)) return status;
+  const int retry = decode_image_impl(&balanced, mode, payload, payload_len, meta, 12);
+  lcc_release((void *)balanced.data);
+  return retry;
+}
+
+int lcc_scan_frames(
+  const LccImage *frames,
+  int count,
+  uint8_t **payload,
+  int *payload_len,
+  LccDecodeMeta *meta
+) {
+  const int status = scan_frames_impl(frames, count, payload, payload_len, meta);
+  if (status == LCC_OK || !frames || count <= 0 || count > 8) return status;
+  LccImage balanced[8];
+  memset(balanced, 0, sizeof(balanced));
+  int n = 0;
+  for (int i = 0; i < count; i++) {
+    if (lcc_white_balance_copy(&frames[i], &balanced[n])) n++;
+  }
+  int retry = status;
+  if (n > 0) {
+    retry = scan_frames_impl(balanced, n, payload, payload_len, meta);
+    for (int i = 0; i < n; i++) lcc_release((void *)balanced[i].data);
+    if (retry == LCC_OK) return retry;
+  }
+  for (int i = 0; i < count; i++) {
+    const int full = decode_image_impl(&frames[i], 2, payload, payload_len, meta, 10);
+    if (full == LCC_OK) return full;
+  }
+  return retry;
 }

@@ -18,7 +18,7 @@
         </div>
       </div>
       <p class="hero-note">
-        L1 / L2a / L3b / L3c / L1s / L2s / L3s / L3t 共用同一套方形几何；形状层用 8 种线形态把容量从 1 bit 扩到 7 bit/模块。
+        L1 / L2a / L3b / L3c / L1s / L2s / L3s / L3t 共用同一套方形几何；经典形状层用 8 种线形态把容量扩到 7 bit/模块，富形状层用 32 种符号扩到 10–13 bit/模块。
         摄像头/屏幕反光场景建议使用 <code>L1 / L2a / L3b / L3c / L3s</code> + <code>constraint: off</code>；形状层最低建议 16px，模块尺寸 Auto 会优先选更大的方块。
       </p>
     </div>
@@ -32,7 +32,7 @@
       </div>
 
       <div class="hint">
-        摄像头首选 <strong>L1 / L2a / L3b / L3c / L3s</strong>；L2b/L3d 需受控，L3t 可用 N≥25，模块最低建议 16px，Auto 会优先选更大方块；L4e/L4f 仅清洁/数字/打印。
+        摄像头首选 <strong>L1 / L2a / L3b / L3c / L3s</strong>；L2b/L3d 需受控，L3t 可用 N≥25，模块最低建议 16px；L4e/L4f 仅清洁/数字/打印；L3u/L4eS/L4fS 是 32 形状富符号层，仅用于受控/打印/数字。
       </div>
 
       <label class="field">
@@ -65,6 +65,9 @@
             <option value="L4e">L4e · 64 色 · 6 bit</option>
             <option value="L3t">L3t · 16 色 + 8 形态 · 7 bit</option>
             <option value="L4f">L4f · 256 色 · 8 bit</option>
+            <option value="L3u">L3u · 32 色 + 32 形态 · 10 bit</option>
+            <option value="L4eS">L4eS · 64 色 + 32 形态 · 11 bit</option>
+            <option value="L4fS">L4fS · 256 色 + 32 形态 · 13 bit</option>
           </select>
         </label>
         <label class="field">

@@ -9,6 +9,7 @@ node scripts/gen-palette-tables.js
 
 SOURCES="
   native/lcc_util.c
+  native/lcc_model.c
   native/lcc_color.c
   native/lcc_ecc.c
   native/lcc_stack.c
@@ -39,6 +40,8 @@ if command -v emcc >/dev/null 2>&1 || [ -x "$HOME/emsdk/upstream/emscripten/emcc
     -Wl,--export=lcc_api_stack \
     -Wl,--export=lcc_api_decode \
     -Wl,--export=lcc_api_scan \
+    -Wl,--export=lcc_api_debug_residuals \
+    -Wl,--export=lcc_api_debug_residuals_h \
     -Wl,--export=lcc_last \
     -Wl,--export=lcc_last_len \
     -Wl,--export=malloc \
@@ -54,6 +57,8 @@ else
     -Wl,--export=lcc_api_stack \
     -Wl,--export=lcc_api_decode \
     -Wl,--export=lcc_api_scan \
+    -Wl,--export=lcc_api_debug_residuals \
+    -Wl,--export=lcc_api_debug_residuals_h \
     -Wl,--export=lcc_last \
     -Wl,--export=lcc_last_len \
     -Wl,--export=malloc \

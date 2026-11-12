@@ -223,6 +223,38 @@ test('L3t uses large modules for small payloads', () => {
   }
 });
 
+test('32-shape rich layers round-trip', () => {
+  const text = 'rich shapes 32';
+  for (const layer of ['L3u', 'L4eS', 'L4fS']) {
+    const result = encode(text, {
+      layer,
+      width: 1024,
+      height: 1024,
+      mode: 'fill',
+      moduleSize: 16,
+      constraint: false,
+      maxModulePx: 32,
+    });
+    assert.equal(result.meta.shapeSetSize, 32, `${layer} shape set`);
+    assert.equal(result.meta.bitsPerModule, { L3u: 10, L4eS: 11, L4fS: 13 }[layer], `${layer} bits`);
+    const decoded = decodeAuto(decodePNG(encodePNG(result.image)));
+    assert.equal(decoded.text, text, `${layer} round-trip`);
+    assert.equal(decoded.meta.layer, layer, `${layer} layer`);
+  }
+});
+
+test('all 32 shape masks are non-empty and distinct', () => {
+  const seen = new Set();
+  for (let shape = 1; shape < 32; shape++) {
+    const mask = shapeMask(shape, 16);
+    const coverage = mask.reduce((sum, v) => sum + v, 0);
+    assert.ok(coverage > 0, `shape ${shape} empty`);
+    const key = Array.from(mask).join('');
+    assert.ok(!seen.has(key), `shape ${shape} duplicates another mask`);
+    seen.add(key);
+  }
+});
+
 test('shape templates survive a one-cell shift', () => {
   const mask = shapeMask(6, 16);
   const result = classifyShape(mask, 16);

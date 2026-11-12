@@ -9,3 +9,6 @@ __pycache__/
 *.pyc
 .DS_Store
 *.log
+.venv/
+training/corpus/
+training/models/

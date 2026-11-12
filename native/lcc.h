@@ -131,6 +131,21 @@ int lcc_api_scan(const uint8_t *input, int input_len);
 uint8_t *lcc_last(void);
 int lcc_last_len(void);
 
+int lcc_api_debug_residuals(const uint8_t *rgb, int width, int height, int mode);
+int lcc_api_debug_residuals_h(
+  const uint8_t *rgb, int width, int height,
+  double h0, double h1, double h2,
+  double h3, double h4, double h5,
+  double h6, double h7, double h8,
+  int version, int N, int module_size
+);
+
+void lcc_debug_reset(void);
+void lcc_debug_stop(void);
+int lcc_debug_count(void);
+int lcc_debug_get(int index, int *row, int *col, int *grid_n, int *shape, float *res);
+void lcc_shape_forward(const float *x, float *logits);
+
 #ifdef __cplusplus
 }
 #endif
