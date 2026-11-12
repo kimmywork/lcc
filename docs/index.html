@@ -18,8 +18,8 @@
         </div>
       </div>
       <p class="hero-note">
-        L1 / L2a / L3b / L3c / L1s / L2s / L3s / L3t 共用同一套方形几何；经典形状层用 8 种线形态把容量扩到 7 bit/模块，富形状层用 32 种符号扩到 10–13 bit/模块。
-        摄像头/屏幕反光场景建议使用 <code>L1 / L2a / L3b / L3c / L3s</code> + <code>constraint: off</code>；形状层最低建议 16px，模块尺寸 Auto 会优先选更大的方块。
+        G/C 命名：<code>G&lt;色彩位宽&gt;&lt;符号位宽&gt;</code> 表示灰度，<code>C&lt;色彩位宽&gt;&lt;符号位宽&gt;</code> 表示彩色；例如 <code>G13</code> = 黑白 + 8 符号，<code>C55</code> = 32 色 + 32 符号。下面按“灰度/彩色、色彩数、符号数”直接选层。
+        摄像头/屏幕反光场景建议使用 <code>G10 / G20 / C30 / C40 / C33</code> + <code>constraint: off</code>；形状层最低建议 16px，模块尺寸 Auto 会优先选更大的方块。
       </p>
     </div>
   </header>
@@ -32,7 +32,7 @@
       </div>
 
       <div class="hint">
-        摄像头首选 <strong>L1 / L2a / L3b / L3c / L3s</strong>；L2b/L3d 需受控，L3t 可用 N≥25，模块最低建议 16px；L4e/L4f 仅清洁/数字/打印；L3u/L4eS/L4fS 是 32 形状富符号层，仅用于受控/打印/数字。
+        摄像头首选 <strong>G10 / G20 / C30 / C40 / C33</strong>；G30/C50 需受控，C43 可用 N≥25，模块最低建议 16px；C60/C80 仅清洁/数字/打印；所有 32 符号层仅用于受控/打印/数字。
       </div>
 
       <label class="field">
@@ -51,25 +51,21 @@
 
       <div class="grid-controls">
         <label class="field">
-          <span>层</span>
-          <select id="layer">
-            <option value="L1" selected>L1 · 黑白 · 1 bit</option>
-            <option value="L2a">L2a · 4 灰 · 2 bit</option>
-            <option value="L3b">L3b · 8 色 · 3 bit</option>
-            <option value="L2b">L2b · 8 灰 · 3 bit</option>
-            <option value="L3c">L3c · 16 色 · 4 bit</option>
-            <option value="L1s">L1s · 黑白 + 8 形态 · 4 bit</option>
-            <option value="L2s">L2s · 4 灰 + 8 形态 · 5 bit</option>
-            <option value="L3d">L3d · 32 色 · 5 bit</option>
-            <option value="L3s">L3s · 8 色 + 8 形态 · 6 bit</option>
-            <option value="L4e">L4e · 64 色 · 6 bit</option>
-            <option value="L3t">L3t · 16 色 + 8 形态 · 7 bit</option>
-            <option value="L4f">L4f · 256 色 · 8 bit</option>
-            <option value="L3u">L3u · 32 色 + 32 形态 · 10 bit</option>
-            <option value="L4eS">L4eS · 64 色 + 32 形态 · 11 bit</option>
-            <option value="L4fS">L4fS · 256 色 + 32 形态 · 13 bit</option>
+          <span>类型</span>
+          <select id="layerKind">
+            <option value="gray">灰度</option>
+            <option value="color">彩色</option>
           </select>
         </label>
+        <label class="field">
+          <span>色彩数</span>
+          <select id="layerColors"></select>
+        </label>
+        <label class="field">
+          <span>符号数</span>
+          <select id="layerShapes"></select>
+        </label>
+        <input type="hidden" id="layer" value="G10">
         <label class="field">
           <span>色板</span>
           <select id="palette">
@@ -169,7 +165,7 @@
       </div>
 
       <div class="hint">
-        如果识别失败，先确认码面是 <strong>L1 / L2a / L3b / L3c / L3s + constraint off</strong>；形状层模块最低建议 16px，Auto 会优先选更大方块；多级灰/彩在屏幕反光下可能丢级。
+        如果识别失败，先确认码面是 <strong>G10 / G20 / C30 / C40 / C33 + constraint off</strong>；形状层模块最低建议 16px，Auto 会优先选更大方块；多级灰/彩在屏幕反光下可能丢级。
       </div>
 
       <div class="actions">

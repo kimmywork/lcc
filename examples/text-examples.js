@@ -17,7 +17,7 @@ const cases = [
   {
     name: 'hello_world',
     label: 'Hello World!',
-    layer: 'L1',
+    layer: 'G10',
     width: 512,
     height: 512,
     text: 'Hello World!',
@@ -25,7 +25,7 @@ const cases = [
   {
     name: 'quick_brown_fox',
     label: 'The quick brown fox',
-    layer: 'L2a',
+    layer: 'G20',
     width: 512,
     height: 512,
     text: 'The quick brown fox jumps over the lazy dog.',
@@ -33,7 +33,7 @@ const cases = [
   {
     name: 'lorem_ipsum',
     label: 'Lorem ipsum',
-    layer: 'L3c',
+    layer: 'C40',
     width: 1024,
     height: 1024,
     file: 'examples/lorem_ipsum.txt',
@@ -41,7 +41,7 @@ const cases = [
   {
     name: 'heart_sutra',
     label: '心经',
-    layer: 'L3d',
+    layer: 'C50',
     width: 1024,
     height: 1024,
     file: 'examples/心经.txt',
@@ -49,7 +49,7 @@ const cases = [
   {
     name: 'diamond_sutra',
     label: '金刚经',
-    layer: 'L4f',
+    layer: 'C80',
     width: 2048,
     height: 2048,
     file: 'examples/金刚经.txt',

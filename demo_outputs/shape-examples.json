@@ -3,7 +3,7 @@
     "name": "hello_world",
     "label": "Hello World!",
     "bytes": 12,
-    "layer": "L1s",
+    "layer": "G13",
     "version": 2,
     "N": 25,
     "moduleSize": 17,
@@ -17,13 +17,13 @@
     "payloadCapacity": 95,
     "corrected": 0,
     "ok": true,
-    "file": "demo_outputs/hello_world_L1s.png"
+    "file": "demo_outputs/hello_world_G13.png"
   },
   {
     "name": "quick_brown_fox",
     "label": "The quick brown fox",
     "bytes": 44,
-    "layer": "L2s",
+    "layer": "G23",
     "version": 2,
     "N": 25,
     "moduleSize": 17,
@@ -37,13 +37,13 @@
     "payloadCapacity": 121,
     "corrected": 0,
     "ok": true,
-    "file": "demo_outputs/quick_brown_fox_L2s.png"
+    "file": "demo_outputs/quick_brown_fox_G23.png"
   },
   {
     "name": "lorem_ipsum",
     "label": "Lorem ipsum",
     "bytes": 446,
-    "layer": "L3s",
+    "layer": "C33",
     "version": 5,
     "N": 37,
     "moduleSize": 24,
@@ -57,13 +57,13 @@
     "payloadCapacity": 488,
     "corrected": 0,
     "ok": true,
-    "file": "demo_outputs/lorem_ipsum_L3s.png"
+    "file": "demo_outputs/lorem_ipsum_C33.png"
   },
   {
     "name": "heart_sutra",
     "label": "心经",
     "bytes": 944,
-    "layer": "L3t",
+    "layer": "C43",
     "version": 8,
     "N": 49,
     "moduleSize": 19,
@@ -77,6 +77,6 @@
     "payloadCapacity": 1100,
     "corrected": 0,
     "ok": true,
-    "file": "demo_outputs/heart_sutra_L3t.png"
+    "file": "demo_outputs/heart_sutra_C43.png"
   }
 ]

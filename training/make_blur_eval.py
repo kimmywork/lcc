@@ -13,6 +13,15 @@ from PIL import Image, ImageFilter
 
 from synth import load_manifest, save_manifest
 
+LEGACY_LAYER_ALIASES = {
+    "L1s": "G13",
+    "L2s": "G23",
+    "L3s": "C33",
+    "L3t": "C43",
+}
+
+SHAPE_LAYERS = ("G13", "G23", "C33", "C43")
+
 
 def degrade(arr: np.ndarray, rng: random.Random, difficulty: float) -> np.ndarray:
     img = Image.fromarray(arr)
@@ -36,7 +45,15 @@ def main() -> None:
     ap.add_argument("--count", type=int, default=240)
     ap.add_argument("--seed", type=int, default=4242)
     args = ap.parse_args()
-    clean = [c for c in load_manifest(Path(args.clean)) if c.layer in ("L1s", "L2s", "L3s", "L3t")]
+    clean = [
+        c for c in load_manifest(Path(args.clean))
+        if LEGACY_LAYER_ALIASES.get(c.layer, c.layer) in SHAPE_LAYERS
+    ]
+    if not clean:
+        raise SystemExit(
+            "no " + ", ".join(SHAPE_LAYERS) + " samples in " + str(args.clean) +
+            "; regenerate the clean corpus or check its manifest"
+        )
     rng = random.Random(args.seed)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -54,7 +71,7 @@ def main() -> None:
                 "width": w,
                 "height": h,
                 "payload": src.payload,
-                "layer": src.layer,
+                "layer": LEGACY_LAYER_ALIASES.get(src.layer, src.layer),
                 "version": src.version,
                 "N": src.N,
                 "moduleSize": src.module_size,

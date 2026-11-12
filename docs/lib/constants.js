@@ -1,22 +1,28 @@
 /**
  * LCC layer table.
  *
- * The hierarchy is deliberately ordered by channel robustness:
- *   L1  : 2-state black/white
- *   L2a : 4-level gray
- *   L2b : 8-level gray
- *   L3c : 16 max-min DeltaE colors   (camera colour)
- *   L3d : 32 max-min DeltaE colors   (camera colour, controlled)
- *   L4e : 64 max-min DeltaE colors   (clean/digital/print)
- *   L4f : 256 max-min DeltaE colors  (clean/digital/print)
+ * Canonical names encode the two channel dimensions:
+ *   G<color bits><shape bits>   grayscale (G)
+ *   C<color bits><shape bits>   chromatic (C)
+ *
+ * The first number is log2(palette size); the second is log2(shape set size).
+ * A trailing 0 means "no shape pattern".  Examples:
+ *   G13 = 2-state black/white (1 bit) + 8 shapes (3 bits) = 4 bit/module
+ *   C35 = 8 max-min colors (3 bits) + 32 shapes (5 bits)  = 8 bit/module
+ *   C80 = 256 max-min colors (8 bits), no shapes           = 8 bit/module
+ *
+ * Legacy L* names are kept as aliases (see LEGACY_LAYER_ALIASES) so existing
+ * documents, corpus manifests and scripts keep working.
  *
  * File Mode (24-bit) is a separate digital carrier and is not in this table.
  */
 
 export const LAYERS = {
-  L1: {
+  // --- base layers: no shape pattern, normal 3-bit mode ids -----------------
+  G10: {
     id: 0,
-    name: 'L1',
+    name: 'G10',
+    legacyName: 'L1',
     kind: 'gray',
     levels: 2,
     paletteSize: 2,
@@ -26,9 +32,10 @@ export const LAYERS = {
     camera: true,
     description: '2-state black/white',
   },
-  L2a: {
+  G20: {
     id: 1,
-    name: 'L2a',
+    name: 'G20',
+    legacyName: 'L2a',
     kind: 'gray',
     levels: 4,
     paletteSize: 4,
@@ -38,9 +45,10 @@ export const LAYERS = {
     camera: true,
     description: '4-level equal-L* gray',
   },
-  L2b: {
+  G30: {
     id: 2,
-    name: 'L2b',
+    name: 'G30',
+    legacyName: 'L2b',
     kind: 'gray',
     levels: 8,
     paletteSize: 8,
@@ -50,9 +58,10 @@ export const LAYERS = {
     camera: true,
     description: '8-level equal-L* gray',
   },
-  L3c: {
+  C40: {
     id: 3,
-    name: 'L3c',
+    name: 'C40',
+    legacyName: 'L3c',
     kind: 'color',
     colors: 16,
     paletteSize: 16,
@@ -62,9 +71,10 @@ export const LAYERS = {
     camera: true,
     description: '16 max-min DeltaE colors',
   },
-  L3d: {
+  C50: {
     id: 4,
-    name: 'L3d',
+    name: 'C50',
+    legacyName: 'L3d',
     kind: 'color',
     colors: 32,
     paletteSize: 32,
@@ -74,9 +84,10 @@ export const LAYERS = {
     camera: true,
     description: '32 max-min DeltaE colors',
   },
-  L4e: {
+  C60: {
     id: 5,
-    name: 'L4e',
+    name: 'C60',
+    legacyName: 'L4e',
     kind: 'color',
     colors: 64,
     paletteSize: 64,
@@ -86,9 +97,10 @@ export const LAYERS = {
     camera: false,
     description: '64 max-min DeltaE colors',
   },
-  L4f: {
+  C80: {
     id: 6,
-    name: 'L4f',
+    name: 'C80',
+    legacyName: 'L4f',
     kind: 'color',
     colors: 256,
     paletteSize: 256,
@@ -99,13 +111,14 @@ export const LAYERS = {
     description: '256 max-min DeltaE colors',
   },
 
-  // --- shape ladder ---------------------------------------------------------
-  // These layers are written with mode=7 (shape escape) and a shape-layer id.
-  // L3b is the "no pattern" 8-colour base; L1s/L2s/L3s/L3t add the 8-shape
-  // dimension on top of B/W, 4-gray, 8-color and 16-color respectively.
-  L3b: {
+  // --- shape-escape layers: mode=7 + layer code ----------------------------
+  // The code is (shapeExt, shapeLayerId, shapeVariant).  shapeVariant is the
+  // low two bits of the format seed field.  Shape layers use a fixed whitening
+  // seed of 0.  The explicit code table is below.
+  C30: {
     id: 7,
-    name: 'L3b',
+    name: 'C30',
+    legacyName: 'L3b',
     kind: 'color',
     colors: 8,
     paletteSize: 8,
@@ -120,9 +133,49 @@ export const LAYERS = {
     minModulePx: 8,
     description: '8 max-min colors, no pattern',
   },
-  L1s: {
+  C20: {
     id: 7,
-    name: 'L1s',
+    name: 'C20',
+    kind: 'color',
+    colors: 4,
+    paletteSize: 4,
+    bitsPerModule: 2,
+    ecc: 0.20,
+    defaultConstraint: false,
+    camera: true,
+    shapeSetSize: 1,
+    shapeLayerId: 1,
+    shapeExt: 1,
+    shapeVariant: 1,
+    minVersion: 2,
+    minModulePx: 8,
+    description: '4 max-min colors, no pattern',
+  },
+
+  C23: {
+    id: 7,
+    name: 'C23',
+    kind: 'color',
+    colors: 4,
+    paletteSize: 4,
+    bitsPerModule: 5,
+    ecc: 0.20,
+    defaultConstraint: false,
+    camera: true,
+    shapeSetSize: 8,
+    shapeLayerId: 1,
+    shapeExt: 1,
+    shapeVariant: 2,
+    minVersion: 2,
+    minModulePx: 12,
+    description: '4 max-min colors + 8 shapes',
+  },
+
+  // --- 8-shape family ------------------------------------------------------
+  G13: {
+    id: 7,
+    name: 'G13',
+    legacyName: 'L1s',
     kind: 'gray',
     levels: 2,
     paletteSize: 2,
@@ -137,9 +190,10 @@ export const LAYERS = {
     minModulePx: 12,
     description: '2-state B/W + 8 shapes',
   },
-  L2s: {
+  G23: {
     id: 7,
-    name: 'L2s',
+    name: 'G23',
+    legacyName: 'L2s',
     kind: 'gray',
     levels: 4,
     paletteSize: 4,
@@ -154,9 +208,28 @@ export const LAYERS = {
     minModulePx: 12,
     description: '4-level gray + 8 shapes',
   },
-  L3s: {
+  G33: {
     id: 7,
-    name: 'L3s',
+    name: 'G33',
+    kind: 'gray',
+    levels: 8,
+    paletteSize: 8,
+    bitsPerModule: 6,
+    ecc: 0.30,
+    defaultConstraint: false,
+    camera: true,
+    shapeSetSize: 8,
+    shapeLayerId: 2,
+    shapeExt: 0,
+    shapeVariant: 1,
+    minVersion: 2,
+    minModulePx: 12,
+    description: '8-level gray + 8 shapes',
+  },
+  C33: {
+    id: 7,
+    name: 'C33',
+    legacyName: 'L3s',
     kind: 'color',
     colors: 8,
     paletteSize: 8,
@@ -171,9 +244,28 @@ export const LAYERS = {
     minModulePx: 12,
     description: '8 max-min colors + 8 shapes',
   },
-  L3t: {
+  C35: {
     id: 7,
-    name: 'L3t',
+    name: 'C35',
+    kind: 'color',
+    colors: 8,
+    paletteSize: 8,
+    bitsPerModule: 8,
+    ecc: 0.30,
+    defaultConstraint: false,
+    camera: false,
+    shapeSetSize: 32,
+    shapeLayerId: 3,
+    shapeExt: 0,
+    shapeVariant: 1,
+    minVersion: 2,
+    minModulePx: 16,
+    description: '8 max-min colors + 32 shapes',
+  },
+  C43: {
+    id: 7,
+    name: 'C43',
+    legacyName: 'L3t',
     kind: 'color',
     colors: 16,
     paletteSize: 16,
@@ -188,14 +280,158 @@ export const LAYERS = {
     minModulePx: 16,
     description: '16 max-min colors + 8 shapes',
   },
-
-  // --- rich shape ladder (32 symbols) ---------------------------------------
-  // The 32-shape set adds 5 bit/module.  These layers are for clean/digital
-  // and controlled print, not for hand-held camera capture.  Module size 16 px
-  // is the minimum we recommend for the thin arrows / T variants.
-  L3u: {
+  C53: {
     id: 7,
-    name: 'L3u',
+    name: 'C53',
+    kind: 'color',
+    colors: 32,
+    paletteSize: 32,
+    bitsPerModule: 8,
+    ecc: 0.35,
+    defaultConstraint: false,
+    camera: false,
+    shapeSetSize: 8,
+    shapeLayerId: 2,
+    shapeExt: 1,
+    shapeVariant: 1,
+    minVersion: 2,
+    minModulePx: 16,
+    description: '32 max-min colors + 8 shapes',
+  },
+  C63: {
+    id: 7,
+    name: 'C63',
+    kind: 'color',
+    colors: 64,
+    paletteSize: 64,
+    bitsPerModule: 9,
+    ecc: 0.40,
+    defaultConstraint: false,
+    camera: false,
+    shapeSetSize: 8,
+    shapeLayerId: 2,
+    shapeExt: 1,
+    shapeVariant: 2,
+    minVersion: 2,
+    minModulePx: 16,
+    description: '64 max-min colors + 8 shapes',
+  },
+  C83: {
+    id: 7,
+    name: 'C83',
+    kind: 'color',
+    colors: 256,
+    paletteSize: 256,
+    bitsPerModule: 11,
+    ecc: 0.40,
+    defaultConstraint: false,
+    camera: false,
+    shapeSetSize: 8,
+    shapeLayerId: 2,
+    shapeExt: 1,
+    shapeVariant: 3,
+    minVersion: 4,
+    minModulePx: 16,
+    description: '256 max-min colors + 8 shapes',
+  },
+
+  // --- 32-shape family -----------------------------------------------------
+  G15: {
+    id: 7,
+    name: 'G15',
+    legacyName: 'L1u',
+    kind: 'gray',
+    levels: 2,
+    paletteSize: 2,
+    bitsPerModule: 6,
+    ecc: 0.20,
+    defaultConstraint: false,
+    camera: false,
+    shapeSetSize: 32,
+    shapeLayerId: 0,
+    shapeExt: 1,
+    shapeVariant: 1,
+    minVersion: 2,
+    minModulePx: 16,
+    description: '2-state B/W + 32 shapes',
+  },
+  G25: {
+    id: 7,
+    name: 'G25',
+    kind: 'gray',
+    levels: 4,
+    paletteSize: 4,
+    bitsPerModule: 7,
+    ecc: 0.20,
+    defaultConstraint: false,
+    camera: false,
+    shapeSetSize: 32,
+    shapeLayerId: 0,
+    shapeExt: 1,
+    shapeVariant: 3,
+    minVersion: 2,
+    minModulePx: 16,
+    description: '4-level gray + 32 shapes',
+  },
+  G35: {
+    id: 7,
+    name: 'G35',
+    legacyName: 'L2u',
+    kind: 'gray',
+    levels: 8,
+    paletteSize: 8,
+    bitsPerModule: 8,
+    ecc: 0.30,
+    defaultConstraint: false,
+    camera: false,
+    shapeSetSize: 32,
+    shapeLayerId: 0,
+    shapeExt: 1,
+    shapeVariant: 2,
+    minVersion: 2,
+    minModulePx: 16,
+    description: '8-level gray + 32 shapes',
+  },
+  C25: {
+    id: 7,
+    name: 'C25',
+    kind: 'color',
+    colors: 4,
+    paletteSize: 4,
+    bitsPerModule: 7,
+    ecc: 0.30,
+    defaultConstraint: false,
+    camera: false,
+    shapeSetSize: 32,
+    shapeLayerId: 1,
+    shapeExt: 1,
+    shapeVariant: 3,
+    minVersion: 2,
+    minModulePx: 16,
+    description: '4 max-min colors + 32 shapes',
+  },
+  C45: {
+    id: 7,
+    name: 'C45',
+    kind: 'color',
+    colors: 16,
+    paletteSize: 16,
+    bitsPerModule: 9,
+    ecc: 0.35,
+    defaultConstraint: false,
+    camera: false,
+    shapeSetSize: 32,
+    shapeLayerId: 3,
+    shapeExt: 1,
+    shapeVariant: 1,
+    minVersion: 2,
+    minModulePx: 16,
+    description: '16 max-min colors + 32 shapes',
+  },
+  C55: {
+    id: 7,
+    name: 'C55',
+    legacyName: 'L3u',
     kind: 'color',
     colors: 32,
     paletteSize: 32,
@@ -208,11 +444,12 @@ export const LAYERS = {
     shapeExt: 1,
     minVersion: 2,
     minModulePx: 16,
-    description: '32 max-min colors + 32 shapes (controlled print/digital)',
+    description: '32 max-min colors + 32 shapes',
   },
-  L4eS: {
+  C65: {
     id: 7,
-    name: 'L4eS',
+    name: 'C65',
+    legacyName: 'L4eS',
     kind: 'color',
     colors: 64,
     paletteSize: 64,
@@ -225,11 +462,12 @@ export const LAYERS = {
     shapeExt: 1,
     minVersion: 2,
     minModulePx: 16,
-    description: '64 max-min colors + 32 shapes (digital/print)',
+    description: '64 max-min colors + 32 shapes',
   },
-  L4fS: {
+  C85: {
     id: 7,
-    name: 'L4fS',
+    name: 'C85',
+    legacyName: 'L4fS',
     kind: 'color',
     colors: 256,
     paletteSize: 256,
@@ -242,9 +480,56 @@ export const LAYERS = {
     shapeExt: 1,
     minVersion: 4,
     minModulePx: 16,
-    description: '256 max-min colors + 32 shapes (clean digital/print)',
+    description: '256 max-min colors + 32 shapes',
   },
 };
+
+// Complete legacy mapping.  Keep this table even after the UI/docs move to
+// canonical names, so old manifests and user scripts remain readable.
+export const LEGACY_LAYER_ALIASES = new Map([
+  ['L1', 'G10'],
+  ['L2a', 'G20'],
+  ['L2b', 'G30'],
+  ['L3b', 'C30'],
+  ['L3c', 'C40'],
+  ['L3d', 'C50'],
+  ['L4e', 'C60'],
+  ['L4f', 'C80'],
+  ['L1s', 'G13'],
+  ['L2s', 'G23'],
+  ['L3s', 'C33'],
+  ['L3t', 'C43'],
+  ['L1u', 'G15'],
+  ['L2u', 'G35'],
+  ['L3u', 'C55'],
+  ['L4eS', 'C65'],
+  ['L4fS', 'C85'],
+]);
+
+export function resolveLayerName(name) {
+  if (!name) return name;
+  return LEGACY_LAYER_ALIASES.get(name) ?? name;
+}
+
+// Keep legacy `LAYERS['L1']` lookups working without putting aliases into
+// canonical enumeration (Object.keys/values/entries).  This matters for
+// scripts that inspect LAYERS to build palette tables or UI lists.
+for (const [legacy, canonical] of LEGACY_LAYER_ALIASES) {
+  Object.defineProperty(LAYERS, legacy, {
+    value: LAYERS[canonical],
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+}
+
+// Legacy view: the original 8-shape slot ids, now pointing at canonical names.
+export const SHAPE_LAYER_BY_ID = new Map([
+  [0, 'C30'],
+  [1, 'G13'],
+  [2, 'G23'],
+  [3, 'C33'],
+]);
 
 // Shape layers use the mode=7 escape and are not addressable by a 3-bit mode
 // id.  Keep LAYER_BY_ID for the normal layers only.
@@ -252,26 +537,40 @@ export const LAYER_BY_ID = new Map(
   Object.values(LAYERS).filter((l) => !l.shapeSetSize).map((l) => [l.id, l]),
 );
 
+// Shape-escape code table: [shapeExt, shapeLayerId, shapeVariant] -> name.
+// Variant 0 preserves the original 8 shape-layer codes.  The remaining slots
+// cover the complete grayscale/color x 0/8/32 symbol matrix.
+export const SHAPE_LAYER_CODE_BY_NAME = new Map([
+  ['C30', [0, 0, 0]],
+  ['G13', [0, 1, 0]],
+  ['G23', [0, 2, 0]],
+  ['G33', [0, 2, 1]],
+  ['C33', [0, 3, 0]],
+  ['C35', [0, 3, 1]],
+  ['C55', [1, 0, 0]],
+  ['G15', [1, 0, 1]],
+  ['G35', [1, 0, 2]],
+  ['G25', [1, 0, 3]],
+  ['C65', [1, 1, 0]],
+  ['C20', [1, 1, 1]],
+  ['C23', [1, 1, 2]],
+  ['C25', [1, 1, 3]],
+  ['C85', [1, 2, 0]],
+  ['C53', [1, 2, 1]],
+  ['C63', [1, 2, 2]],
+  ['C83', [1, 2, 3]],
+  ['C43', [1, 3, 0]],
+  ['C45', [1, 3, 1]],
+]);
+
+export const SHAPE_LAYER_NAME_BY_CODE = new Map(
+  Array.from(SHAPE_LAYER_CODE_BY_NAME, ([name, code]) => [code.join(','), name]),
+);
+
 export const SHAPE_LAYER_IDS = [0, 1, 2, 3];
 
-export const SHAPE_LAYER_BY_ID = new Map([
-  [0, 'L3b'],
-  [1, 'L1s'],
-  [2, 'L2s'],
-  [3, 'L3s'],
-]);
-
-// The shape-extension bit selects the richer branch: L3t / L3u / L4eS / L4fS.
-export const SHAPE_LAYER_EXT_BY_ID = new Map([
-  [0, 'L3u'],
-  [1, 'L4eS'],
-  [2, 'L4fS'],
-  [3, 'L3t'],
-]);
-
-export function resolveShapeLayer(shapeLayerId, shapeExt = 0) {
-  if (shapeExt) return SHAPE_LAYER_EXT_BY_ID.get(shapeLayerId) ?? null;
-  return SHAPE_LAYER_BY_ID.get(shapeLayerId) ?? null;
+export function resolveShapeLayer(shapeLayerId, shapeExt = 0, shapeVariant = 0) {
+  return SHAPE_LAYER_NAME_BY_CODE.get(`${shapeExt},${shapeLayerId},${shapeVariant}`) ?? null;
 }
 
 export const ECC_LEVELS = [0.20, 0.30, 0.35, 0.40];

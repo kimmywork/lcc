@@ -4,6 +4,7 @@ import {
   detectPerspective,
   renderSVG,
   stackCanonicalFrames,
+  LAYERS,
 } from './lib/index.js';
 import { decodeAutoWasm, scanFramesWasm, stackCanonicalFramesWasm } from './lib/lcc-wasm.js';
 
@@ -12,6 +13,62 @@ const textEl = $('text');
 const encodeCanvas = $('encodeCanvas');
 const scanCanvas = $('scanCanvas');
 const video = $('video');
+
+const LAYER_LIST = Object.values(LAYERS);
+
+function layerForDimensions(kind, colors, shapes) {
+  return LAYER_LIST.find((layer) => layer.kind === kind
+    && layer.paletteSize === colors
+    && (layer.shapeSetSize ?? 1) === shapes);
+}
+
+function refreshLayerColors() {
+  const kind = $('layerKind').value;
+  const values = [...new Set(LAYER_LIST
+    .filter((layer) => layer.kind === kind)
+    .map((layer) => layer.paletteSize))]
+    .sort((a, b) => a - b);
+  const previous = Number($('layerColors').value);
+  $('layerColors').innerHTML = values
+    .map((value) => `<option value="${value}">${kind === 'gray' ? `${value} 级灰` : `${value} 色`}</option>`)
+    .join('');
+  $('layerColors').value = String(values.includes(previous) ? previous : values[0]);
+  refreshLayerShapes();
+}
+
+function refreshLayerShapes() {
+  const kind = $('layerKind').value;
+  const colors = Number($('layerColors').value);
+  const values = [...new Set(LAYER_LIST
+    .filter((layer) => layer.kind === kind && layer.paletteSize === colors)
+    .map((layer) => layer.shapeSetSize ?? 1))]
+    .sort((a, b) => a - b);
+  const previous = Number($('layerShapes').value);
+  $('layerShapes').innerHTML = values
+    .map((value) => `<option value="${value}">${value === 1 ? '无符号' : `${value} 符号`}</option>`)
+    .join('');
+  $('layerShapes').value = String(values.includes(previous) ? previous : values[0]);
+  applyLayerDimensions();
+}
+
+function applyLayerDimensions() {
+  const kind = $('layerKind').value;
+  const colors = Number($('layerColors').value);
+  const shapes = Number($('layerShapes').value);
+  const layer = layerForDimensions(kind, colors, shapes);
+  if (layer) $('layer').value = layer.name;
+}
+
+function syncLayerDimensionControls(name = $('layer').value) {
+  const layer = LAYERS[name];
+  if (!layer) return;
+  $('layerKind').value = layer.kind;
+  refreshLayerColors();
+  $('layerColors').value = String(layer.paletteSize);
+  refreshLayerShapes();
+  $('layerShapes').value = String(layer.shapeSetSize ?? 1);
+  applyLayerDimensions();
+}
 
 let lastEncoded = null;
 let cameraStream = null;
@@ -78,15 +135,15 @@ function friendlyError(error) {
     if (meta.shapeSetSize > 1) {
       return `检测到 ${meta.layer} 形状码，但纠错失败：形状层需要更大模块（建议 16px）和更清晰的画面；请靠近、保持对焦、避开运动模糊。`;
     }
-    if (meta.layer === 'L1' || meta.layer === 'L2a' || meta.layer === 'L3b' || meta.layer === 'L3c') {
+    if (meta.layer === 'G10' || meta.layer === 'G20' || meta.layer === 'C30' || meta.layer === 'C40') {
       return `检测到 ${meta.layer} 码，但纠错失败：请靠近、保持清晰、避开反光。`;
     }
-    if (meta.layer === 'L2b') {
+    if (meta.layer === 'G30') {
       const c = meta.constraint ? '，且开启了 constraint' : '';
-      return `L2b 是支持的；这次是真实纠错失败（检测到 L2b 8 灰${c}）。8 灰间距较小，强反光/摩尔纹下容易跨级；请换角度/靠近，或改用 L2a（4 灰）或 L3b/L3c + constraint off。`;
+      return `G30 是支持的；这次是真实纠错失败（检测到 G30 8 灰${c}）。8 灰间距较小，强反光/摩尔纹下容易跨级；请换角度/靠近，或改用 G20（4 灰）或 C30/C40 + constraint off。`;
     }
     const extra = meta.constraint ? '，且开启了 constraint' : '';
-    return `检测到 ${meta.layer} 多级色码${extra}；摄像头建议 L3b/L3c/L3s，L4e/L4f 仅用于清洁/数字/打印。`;
+    return `检测到 ${meta.layer} 多级色码${extra}；摄像头建议 C30/C40/C33，C60/C80 仅用于清洁/数字/打印。`;
   }
   const msg = String(error?.message ?? error);
   if (msg.includes('no contrast')) return '画面没有足够对比度，请对准码面并避免过曝。';
@@ -95,7 +152,7 @@ function friendlyError(error) {
   if (msg.includes('version range does not fit')) {
     return '当前层/载荷在画布内放不下：请增大画布、减小静区，或缩短载荷。';
   }
-  if (msg.includes('RS:')) return '纠错失败：屏幕反光/高光削顶会破坏多级灰/彩。摄像头场景请改用 L1 黑白 + constraint off，或换角度避开反光。';
+  if (msg.includes('RS:')) return '纠错失败：屏幕反光/高光削顶会破坏多级灰/彩。摄像头场景请改用 G10 黑白 + constraint off，或换角度避开反光。';
   if (msg.includes('constraint')) return '约束解码失败；摄像头场景请生成 constraint off 的码面。';
   return msg;
 }
@@ -554,8 +611,15 @@ $('downloadSvg').addEventListener('click', () => {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 });
 
+$('layerKind').addEventListener('change', refreshLayerColors);
+$('layerColors').addEventListener('change', refreshLayerShapes);
+$('layerShapes').addEventListener('change', applyLayerDimensions);
+$('layer').value = 'G10';
+syncLayerDimensionControls('G10');
+
 document.getElementById('cameraPreset').addEventListener('click', () => {
-  $('layer').value = 'L1';
+  $('layer').value = 'G10';
+  syncLayerDimensionControls('G10');
   $('palette').value = 'maxmin';
   $('mode').value = 'fill';
   $('size').value = '1024';
@@ -568,11 +632,12 @@ document.getElementById('cameraPreset').addEventListener('click', () => {
   $('maxVersion').value = '100';
   if (!textEl.value.trim()) textEl.value = 'https://example.com/lcc';
   generate();
-  setStatus('已切换到摄像头黑白预设：L1 + Q + Boost ECC + 静区 4。', '');
+  setStatus('已切换到摄像头黑白预设：G10 + Q + Boost ECC + 静区 4。', '');
 });
 
 document.getElementById('cameraColorPreset').addEventListener('click', () => {
-  $('layer').value = 'L3c';
+  $('layer').value = 'C40';
+  syncLayerDimensionControls('C40');
   $('palette').value = 'maxmin';
   $('mode').value = 'fill';
   $('size').value = '1024';
@@ -585,11 +650,12 @@ document.getElementById('cameraColorPreset').addEventListener('click', () => {
   $('maxVersion').value = '100';
   if (!textEl.value.trim()) textEl.value = 'https://example.com/lcc';
   generate();
-  setStatus('已切换到摄像头彩色预设：L3c（16 色，min ΔE ≈ 49）+ Q + Boost ECC + 静区 4。', '');
+  setStatus('已切换到摄像头彩色预设：C40（16 色，min ΔE ≈ 49）+ Q + Boost ECC + 静区 4。', '');
 });
 
 document.getElementById('cameraShapePreset').addEventListener('click', () => {
-  $('layer').value = 'L3s';
+  $('layer').value = 'C33';
+  syncLayerDimensionControls('C33');
   $('palette').value = 'maxmin';
   $('mode').value = 'fill';
   $('size').value = '1024';
@@ -602,7 +668,7 @@ document.getElementById('cameraShapePreset').addEventListener('click', () => {
   $('maxVersion').value = '100';
   if (!textEl.value.trim()) textEl.value = 'https://example.com/lcc';
   generate();
-  setStatus('已切换到摄像头形态预设：L3s（8 色 + 8 形态，6 bit）+ Q + 静区 4；模块尺寸 auto，优先选能放下的最大模块（摄像头最低建议 16px）。', '');
+  setStatus('已切换到摄像头形态预设：C33（8 色 + 8 符号，6 bit）+ Q + 静区 4；模块尺寸 auto，优先选能放下的最大模块（摄像头最低建议 16px）。', '');
 });
 
 document.querySelectorAll('[data-example]').forEach((btn) => {
@@ -612,7 +678,8 @@ document.querySelectorAll('[data-example]').forEach((btn) => {
       const response = await fetch(`./examples/${encodeURIComponent(name)}`);
       if (!response.ok) throw new Error(`示例加载失败 (${response.status})`);
       textEl.value = await response.text();
-      $('layer').value = 'L4f';
+      $('layer').value = 'C80';
+      syncLayerDimensionControls('C80');
       $('palette').value = 'maxmin';
       $('constraint').checked = false;
       $('ecc').value = 'auto';
@@ -623,7 +690,7 @@ document.querySelectorAll('[data-example]').forEach((btn) => {
       $('maxVersion').value = '100';
       $('size').value = name.includes('金刚经') ? '2048' : '1024';
       generate();
-      setStatus(`已加载示例：${name}。摄像头场景建议使用 L1/L2a/L3b/L3c/L3s + constraint off。`, '');
+      setStatus(`已加载示例：${name}。摄像头场景建议使用 G10/G20/C30/C40/C33 + constraint off。`, '');
     } catch (e) {
       setStatus(friendlyError(e), 'err');
     }

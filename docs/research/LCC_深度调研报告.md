@@ -1,3 +1,5 @@
+> 命名迁移（2026-11-12）：文中 `L*` 为 legacy 名称；当前规范使用 `G/C` 命名，完整映射见 README 和 `docs/lcc-spec.md`。
+
 > **2026-11-12 最终状态**：这是一份外部独立调研记录，部分实验代码/feature 开关已在最终清理中移除；当前实现以 `docs/research/lcc-experiment-status.md` 为准。
 
 # LCC 解码器下一阶段深度调研报告

@@ -18,6 +18,7 @@ import {
   MIN_MODULE_PX,
   QUIET_ZONE,
   eccNameOf,
+  resolveLayerName,
 } from './constants.js';
 import { RankConstraint } from './constraint.js';
 import { computeRSBlocks, rsEncodeBlocks } from './ecc/rs.js';
@@ -49,7 +50,7 @@ function baseCapacityFor(layout, layerName, paletteInfo, constraint) {
   const D = layout.dataCount;
   let capacityBits;
   let rankConstraint = null;
-  if (layerName === 'L1') {
+  if (layerName === 'G10') {
     capacityBits = D;
   } else if (constraint) {
     rankConstraint = new RankConstraint(paletteInfo);
@@ -73,8 +74,10 @@ export function capacityFor(
   layerName,
   paletteInfo,
   constraint,
-  ecc = LAYERS[layerName].ecc,
+  ecc = undefined,
 ) {
+  layerName = resolveLayerName(layerName);
+  if (ecc === undefined) ecc = LAYERS[layerName].ecc;
   const base = baseCapacityFor(layout, layerName, paletteInfo, constraint);
   const payload = payloadForEcc(base.capacityBits, ecc);
   return { ...base, ...payload, ecc };
@@ -93,7 +96,7 @@ function pickCap(layout, layerName, paletteInfo, constraint, payloadSize, baseEc
 
 export function chooseVersionAndScale({
   payloadSize,
-  layerName,
+  layerName: rawLayerName,
   paletteInfo,
   harmony = false,
   constraint,
@@ -105,10 +108,12 @@ export function chooseVersionAndScale({
   quietZone,
   minVersion = 1,
   maxVersion = 100,
-  baseEcc = LAYERS[layerName].ecc,
+  baseEcc = undefined,
   boostEcc = false,
   moduleSize = null,
 }) {
+  const layerName = resolveLayerName(rawLayerName);
+  if (baseEcc === undefined) baseEcc = LAYERS[layerName].ecc;
   const minSide = Math.min(width, height);
   const layoutFor = (version) => makeLayout({
     version,
@@ -231,15 +236,20 @@ function render(symbols, layout, palette, moduleSize, quietZone, layer) {
 }
 
 export function encode(payload, options = {}) {
-  const layerName = options.layer ?? 'L1';
+  const layerName = resolveLayerName(options.layer ?? 'G10');
   const layer = LAYERS[layerName];
   if (!layer) throw new Error(`LCC: unknown layer ${layerName}`);
 
   const isShapeLayer = !!layer.shapeSetSize;
+  if (isShapeLayer && (options.seed ?? 0) !== 0) {
+    throw new Error(
+      'LCC: shape layers reserve the format seed field for the shape variant; options.seed must be 0',
+    );
+  }
   const paletteMode = isShapeLayer ? 'maxmin' : (options.paletteMode ?? 'maxmin');
   const harmony = isShapeLayer ? false : (options.harmony ?? false);
   let constraint = options.constraint ?? layer.defaultConstraint;
-  if (layerName === 'L1' || isShapeLayer) constraint = false;
+  if (layerName === 'G10' || isShapeLayer) constraint = false;
 
   const mode = options.mode ?? 'fill';
   const width = options.width ?? 1024;
@@ -305,9 +315,15 @@ export function encode(payload, options = {}) {
   const formatBlocks = layout.format.blocksPerCopy;
 
   let seed = options.seed ?? 0;
-  if (formatBlocks === 1) seed = 0;
+  if (isShapeLayer) {
+    // The format seed field carries the shape-layer variant.  Shape layers
+    // always use a fixed whitening seed so existing variant-0 codes are
+    // unchanged.
+    seed = layer.shapeVariant ?? 0;
+  } else if (formatBlocks === 1) seed = 0;
   else if (formatBlocks === 2) seed &= 3;
   else seed &= 63;
+  const whitenSeed = isShapeLayer ? 0 : seed;
 
   paletteInfo = generatePalette(layerName, { mode: paletteMode, harmony });
 
@@ -322,7 +338,7 @@ export function encode(payload, options = {}) {
   }
   const padded = new Uint8Array(cap.kTotal);
   padded.set(frame, 0);
-  const whitened = makeWhitening(seed)(padded);
+  const whitened = makeWhitening(whitenSeed)(padded);
   const rsBytes = rsEncodeBlocks(whitened, cap.S, ecc);
 
   const bitLength = cap.capacityBits;
@@ -330,7 +346,7 @@ export function encode(payload, options = {}) {
   bitBytes.set(rsBytes.subarray(0, Math.min(rsBytes.length, bitBytes.length)));
 
   let dataSymbols;
-  if (layerName === 'L1') {
+  if (layerName === 'G10') {
     const reader = new BitReader(bitBytes, bitLength);
     dataSymbols = new Array(cap.D);
     for (let i = 0; i < cap.D; i++) dataSymbols[i] = reader.readBit();
@@ -374,7 +390,7 @@ export function encode(payload, options = {}) {
     layer,
   );
 
-  const actualBitsPerModule = layerName === 'L1'
+  const actualBitsPerModule = layerName === 'G10'
     ? 1
     : constraint
       ? cap.capacityBits / cap.D
@@ -398,7 +414,7 @@ export function encode(payload, options = {}) {
       constraint,
       constraintRankCount: paletteInfo.rankCount,
       constraintMaxDiff: paletteInfo.maxRankDiff,
-      seed,
+      seed: whitenSeed,
       ecc,
       eccLevel: eccNameOf(ecc),
       dataCount: cap.D,
@@ -409,8 +425,10 @@ export function encode(payload, options = {}) {
       payloadSize: payloadBytes.length,
       formatBlocks,
       shapeLayer: isShapeLayer,
+      legacyLayer: layer.legacyName ?? null,
       shapeLayerId: isShapeLayer ? layer.shapeLayerId : null,
       shapeExt: isShapeLayer ? layer.shapeExt : 0,
+      shapeVariant: isShapeLayer ? (layer.shapeVariant ?? 0) : 0,
       shapeSetSize: layer.shapeSetSize ?? 1,
       shapeBits: isShapeLayer ? Math.log2(layer.shapeSetSize) : 0,
       colorCount: layer.paletteSize,

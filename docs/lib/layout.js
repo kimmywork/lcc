@@ -11,7 +11,7 @@
  */
 
 import { deltaE76 } from './color.js';
-import { LAYERS, versionToSize } from './constants.js';
+import { LAYERS, resolveLayerName, versionToSize } from './constants.js';
 import { generatePalette } from './palettes.js';
 
 export const BLACK = 0;
@@ -58,17 +58,17 @@ export function hilbertOrder(n) {
 
 export function calibrationSampleCount(layerName, N) {
   const layer = LAYERS[layerName];
-  if (!layer || layerName === 'L1') return 0;
+  if (!layer || layerName === 'G10') return 0;
   if (layer.kind === 'gray') return 0;
   if (layer.shapeSetSize) {
     const count = layer.colors ?? 0;
     if (count <= 8) return count;
     return N < 33 ? 8 : count;
   }
-  if (layerName === 'L3c') return 16;
-  if (layerName === 'L3d') return N < 33 ? 16 : 32;
-  if (layerName === 'L4e') return N < 33 ? 16 : N < 57 ? 32 : 64;
-  if (layerName === 'L4f') return N < 33 ? 16 : N < 57 ? 64 : 256;
+  if (layerName === 'C40') return 16;
+  if (layerName === 'C50') return N < 33 ? 16 : 32;
+  if (layerName === 'C60') return N < 33 ? 16 : N < 57 ? 32 : 64;
+  if (layerName === 'C80') return N < 33 ? 16 : N < 57 ? 64 : 256;
   return 0;
 }
 
@@ -121,6 +121,7 @@ export function makeLayout({
   harmony = false,
   paletteInfo = null,
 }) {
+  layerName = resolveLayerName(layerName);
   const layer = LAYERS[layerName];
   if (!layer) throw new Error(`Unknown layer: ${layerName}`);
   const palette = paletteInfo ?? generatePalette(layerName, { mode: paletteMode, harmony });
@@ -234,7 +235,7 @@ export function makeLayout({
   const paletteBlocks = [];
   const shapeBlocks = [];
   const endpointBlocks = [];
-  if (layerName !== 'L1') {
+  if (layerName !== 'G10') {
     const paletteCount = calibrationSampleCount(layerName, N);
     const paletteSide = paletteCount === 0 ? 0 : Math.ceil(Math.sqrt(paletteCount));
     const grayLevels = layer.kind === 'gray' ? layer.levels : 16;

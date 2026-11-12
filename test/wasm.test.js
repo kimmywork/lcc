@@ -39,10 +39,17 @@ function noisy(image, sigma, seed) {
 
 test('wasm decode matches JS on clean, cast, and stacked images', async () => {
   const samples = [
-    ['L1', { layer: 'L1', width: 512, height: 512, mode: 'fill', constraint: false, maxModulePx: 32 }],
-    ['L3c', { layer: 'L3c', version: 2, moduleSize: 24, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32, constraint: false }],
-    ['L3s', { layer: 'L3s', version: 2, moduleSize: 24, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32 }],
-    ['L3u', { layer: 'L3u', version: 4, moduleSize: 16, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32 }],
+    ['G10', { layer: 'G10', width: 512, height: 512, mode: 'fill', constraint: false, maxModulePx: 32 }],
+    ['C40', { layer: 'C40', version: 2, moduleSize: 24, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32, constraint: false }],
+    ['C33', { layer: 'C33', version: 2, moduleSize: 24, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32 }],
+    ['C55', { layer: 'C55', version: 4, moduleSize: 16, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32 }],
+    ['C23', { layer: 'C23', version: 4, moduleSize: 16, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32 }],
+    ['C25', { layer: 'C25', version: 4, moduleSize: 16, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32 }],
+    ['G15', { layer: 'G15', version: 4, moduleSize: 16, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32 }],
+    ['G25', { layer: 'G25', version: 4, moduleSize: 16, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32 }],
+    ['G35', { layer: 'G35', version: 4, moduleSize: 16, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32 }],
+    ['C65', { layer: 'C65', version: 4, moduleSize: 16, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32 }],
+    ['C85', { layer: 'C85', version: 6, moduleSize: 16, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32 }],
   ];
   for (const [layer, options] of samples) {
     const image = encode(`wasm ${layer}`, options).image;
@@ -53,7 +60,7 @@ test('wasm decode matches JS on clean, cast, and stacked images', async () => {
   }
 
   const color = encode('cast', {
-    layer: 'L3c', version: 2, moduleSize: 24, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32, constraint: false,
+    layer: 'C40', version: 2, moduleSize: 24, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32, constraint: false,
   }).image;
   const cast = applyChannelCast(color, [1, 0.82, 0.62]);
   const castJs = decodeAuto(cast, { detector: 'axis' });
@@ -62,7 +69,7 @@ test('wasm decode matches JS on clean, cast, and stacked images', async () => {
   assert.deepEqual(Array.from(castWasm.payload), Array.from(castJs.payload));
 
   const burst = encode('stack test', {
-    layer: 'L3s', version: 2, moduleSize: 24, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32,
+    layer: 'C33', version: 2, moduleSize: 24, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32,
   }).image;
   const frames = [];
   const detections = [];
@@ -90,7 +97,7 @@ test('wasm decode matches JS on clean, cast, and stacked images', async () => {
 
 test('wasm leaves constraint codes to the JS decoder', async () => {
   const image = encode('constrained', {
-    layer: 'L2b', width: 512, height: 512, mode: 'fill', constraint: true, maxModulePx: 32,
+    layer: 'G30', width: 512, height: 512, mode: 'fill', constraint: true, maxModulePx: 32,
   }).image;
   assert.equal(await decodeAutoWasm(image, { detector: 'axis' }), null);
   assert.equal(decodeAuto(image, { detector: 'axis' }).text, 'constrained');
@@ -98,7 +105,7 @@ test('wasm leaves constraint codes to the JS decoder', async () => {
 
 test('wasm stack and decode are faster than JS on the same fixture', async () => {
   const image = encode('timing', {
-    layer: 'L3s', version: 2, moduleSize: 24, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32,
+    layer: 'C33', version: 2, moduleSize: 24, width: 1024, height: 1024, mode: 'fill', maxModulePx: 32,
   }).image;
   const frames = [];
   const detections = [];

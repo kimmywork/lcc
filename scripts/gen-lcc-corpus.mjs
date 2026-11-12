@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { encode } from '../src/encoder.js';
+import { LAYERS as LAYER_TABLE } from '../src/constants.js';
 
 function parseArgs(argv) {
   const out = { count: 120, seed: 1, out: 'training/corpus/clean' };
@@ -38,7 +39,7 @@ function rng(seed) {
   };
 }
 
-const LAYERS = ['L1', 'L2a', 'L3c', 'L1s', 'L2s', 'L3s', 'L3t'];
+const LAYERS = ['G10', 'G20', 'C40', 'G13', 'G23', 'C33', 'C43'];
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,:;-_/';
 
 function payloadOf(rand, n) {
@@ -60,7 +61,7 @@ function main() {
     let sample = null;
     for (let attempt = 0; attempt < 80 && !sample; attempt++) {
       const layer = LAYERS[Math.floor(rand() * LAYERS.length)];
-      const shapeLayer = layer.endsWith('s') || layer === 'L3t';
+      const shapeLayer = !!LAYER_TABLE[layer].shapeSetSize;
       const version = 2 + Math.floor(rand() * 14);
       const moduleSize = shapeLayer
         ? 12 + Math.floor(rand() * 13)

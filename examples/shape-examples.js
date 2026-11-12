@@ -2,7 +2,7 @@
  * README shape-layer examples.
  *
  * Generates the same first four texts as the base examples, but with the
- * pattern layers L1s/L2s/L3s/L3t.
+ * pattern layers G13/G23/C33/C43.
  *
  * Run: node examples/shape-examples.js
  */
@@ -20,7 +20,7 @@ const cases = [
   {
     name: 'hello_world',
     label: 'Hello World!',
-    layer: 'L1s',
+    layer: 'G13',
     width: 512,
     height: 512,
     text: 'Hello World!',
@@ -28,7 +28,7 @@ const cases = [
   {
     name: 'quick_brown_fox',
     label: 'The quick brown fox',
-    layer: 'L2s',
+    layer: 'G23',
     width: 512,
     height: 512,
     text: 'The quick brown fox jumps over the lazy dog.',
@@ -36,7 +36,7 @@ const cases = [
   {
     name: 'lorem_ipsum',
     label: 'Lorem ipsum',
-    layer: 'L3s',
+    layer: 'C33',
     width: 1024,
     height: 1024,
     file: 'examples/lorem_ipsum.txt',
@@ -44,7 +44,7 @@ const cases = [
   {
     name: 'heart_sutra',
     label: '心经',
-    layer: 'L3t',
+    layer: 'C43',
     width: 1024,
     height: 1024,
     file: 'examples/心经.txt',

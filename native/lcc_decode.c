@@ -178,22 +178,50 @@ static int read_format(const LccImage *image, const LccFound *found, const LccVa
   return 1;
 }
 
+typedef struct {
+  int ext;
+  int id;
+  int variant;
+  const char *name;
+} ShapeLayerCode;
+
+static const ShapeLayerCode SHAPE_LAYER_CODES[] = {
+  {0, 0, 0, "C30"},
+  {0, 1, 0, "G13"},
+  {0, 2, 0, "G23"},
+  {0, 2, 1, "G33"},
+  {0, 3, 0, "C33"},
+  {0, 3, 1, "C35"},
+  {1, 0, 0, "C55"},
+  {1, 0, 1, "G15"},
+  {1, 0, 2, "G35"},
+  {1, 0, 3, "G25"},
+  {1, 1, 0, "C65"},
+  {1, 1, 1, "C20"},
+  {1, 1, 2, "C23"},
+  {1, 1, 3, "C25"},
+  {1, 2, 0, "C85"},
+  {1, 2, 1, "C53"},
+  {1, 2, 2, "C63"},
+  {1, 2, 3, "C83"},
+  {1, 3, 0, "C43"},
+  {1, 3, 1, "C45"},
+};
+
 static const char *layer_name_of(const FormatInfo *fmt) {
   if (fmt->mode_id == 7) {
-    if (fmt->shape_ext) {
-      if (fmt->shape_layer_id == 0) return "L3u";
-      if (fmt->shape_layer_id == 1) return "L4eS";
-      if (fmt->shape_layer_id == 2) return "L4fS";
-      if (fmt->shape_layer_id == 3) return "L3t";
-      return NULL;
+    const int variant = fmt->seed & 3;
+    for (size_t i = 0; i < sizeof(SHAPE_LAYER_CODES) / sizeof(SHAPE_LAYER_CODES[0]); i++) {
+      const ShapeLayerCode *code = &SHAPE_LAYER_CODES[i];
+      if (code->ext == (fmt->shape_ext ? 1 : 0)
+        && code->id == fmt->shape_layer_id
+        && code->variant == variant) {
+        return code->name;
+      }
     }
-    if (fmt->shape_layer_id == 0) return "L3b";
-    if (fmt->shape_layer_id == 1) return "L1s";
-    if (fmt->shape_layer_id == 2) return "L2s";
-    if (fmt->shape_layer_id == 3) return "L3s";
     return NULL;
   }
-  const char *names[] = { "L1", "L2a", "L2b", "L3c", "L3d", "L4e", "L4f" };
+  const char *names[] = { "G10", "G20", "G30", "C40", "C50", "C60", "C80" };
   if (fmt->mode_id < 0 || fmt->mode_id > 6) return NULL;
   return names[fmt->mode_id];
 }
@@ -420,7 +448,7 @@ static int argmin(const double *costs, int n) {
 
 static void build_calibrator(const LccPaletteInfo *palette, const LccLayout *layout, const LccImage *image, const LccFound *found, const Illum *illum, Calibrator *cal) {
   memset(cal, 0, sizeof(*cal));
-  if (strcmp(palette->name, "L1") == 0) {
+  if (strcmp(palette->name, "G10") == 0) {
     cal->type = LCC_CAL_THRESHOLD;
     return;
   }
@@ -607,7 +635,6 @@ static void shape_mask(int shape, int size, int line, int inset, uint8_t *mask) 
   const double square = inset > (int)lcc_js_round(size / 4.0) ? inset : (int)lcc_js_round(size / 4.0);
   const double slo = square;
   const double shi = size - square;
-  const double head = (inset * 2.0) > (size / 6.0) ? (inset * 2.0) : (size / 6.0);
   const double gap = (size * 0.08) > inset ? (size * 0.08) : inset;
   double segs[4][4];
   int nseg = 0;
@@ -646,37 +673,37 @@ static void shape_mask(int shape, int size, int line, int inset, uint8_t *mask) 
     segs[0][0] = mid; segs[0][1] = lo; segs[0][2] = lo; segs[0][3] = hi;
     segs[1][0] = mid; segs[1][1] = lo; segs[1][2] = hi; segs[1][3] = hi; nseg = 2;
   } else if (shape == 12) {
-    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = lo; segs[0][3] = mid;
-    segs[1][0] = lo; segs[1][1] = mid; segs[1][2] = lo + head; segs[1][3] = mid - head;
-    segs[2][0] = lo; segs[2][1] = mid; segs[2][2] = lo + head; segs[2][3] = mid + head; nseg = 3;
+    segs[0][0] = lo; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = mid;
+    segs[1][0] = lo; segs[1][1] = mid; segs[1][2] = mid; segs[1][3] = lo;
+    segs[2][0] = lo; segs[2][1] = mid; segs[2][2] = mid; segs[2][3] = hi; nseg = 3;
   } else if (shape == 13) {
-    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = mid; segs[0][3] = lo;
-    segs[1][0] = mid; segs[1][1] = lo; segs[1][2] = mid - head; segs[1][3] = lo + head;
-    segs[2][0] = mid; segs[2][1] = lo; segs[2][2] = mid + head; segs[2][3] = lo + head; nseg = 3;
+    segs[0][0] = mid; segs[0][1] = lo; segs[0][2] = mid; segs[0][3] = hi;
+    segs[1][0] = mid; segs[1][1] = lo; segs[1][2] = lo; segs[1][3] = mid;
+    segs[2][0] = mid; segs[2][1] = lo; segs[2][2] = hi; segs[2][3] = mid; nseg = 3;
   } else if (shape == 14) {
-    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = mid;
-    segs[1][0] = hi; segs[1][1] = mid; segs[1][2] = hi - head; segs[1][3] = mid - head;
-    segs[2][0] = hi; segs[2][1] = mid; segs[2][2] = hi - head; segs[2][3] = mid + head; nseg = 3;
+    segs[0][0] = lo; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = mid;
+    segs[1][0] = hi; segs[1][1] = mid; segs[1][2] = mid; segs[1][3] = lo;
+    segs[2][0] = hi; segs[2][1] = mid; segs[2][2] = mid; segs[2][3] = hi; nseg = 3;
   } else if (shape == 15) {
-    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = mid; segs[0][3] = hi;
-    segs[1][0] = mid; segs[1][1] = hi; segs[1][2] = mid - head; segs[1][3] = hi - head;
-    segs[2][0] = mid; segs[2][1] = hi; segs[2][2] = mid + head; segs[2][3] = hi - head; nseg = 3;
+    segs[0][0] = mid; segs[0][1] = lo; segs[0][2] = mid; segs[0][3] = hi;
+    segs[1][0] = mid; segs[1][1] = hi; segs[1][2] = lo; segs[1][3] = mid;
+    segs[2][0] = mid; segs[2][1] = hi; segs[2][2] = hi; segs[2][3] = mid; nseg = 3;
   } else if (shape == 16) {
-    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = lo; segs[0][3] = lo;
-    segs[1][0] = lo; segs[1][1] = lo; segs[1][2] = lo + head; segs[1][3] = lo;
-    segs[2][0] = lo; segs[2][1] = lo; segs[2][2] = lo; segs[2][3] = lo + head; nseg = 3;
+    segs[0][0] = lo; segs[0][1] = lo; segs[0][2] = hi; segs[0][3] = hi;
+    segs[1][0] = lo; segs[1][1] = lo; segs[1][2] = lo; segs[1][3] = mid;
+    segs[2][0] = lo; segs[2][1] = lo; segs[2][2] = mid; segs[2][3] = lo; nseg = 3;
   } else if (shape == 17) {
-    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = lo;
-    segs[1][0] = hi; segs[1][1] = lo; segs[1][2] = hi - head; segs[1][3] = lo;
-    segs[2][0] = hi; segs[2][1] = lo; segs[2][2] = hi; segs[2][3] = lo + head; nseg = 3;
+    segs[0][0] = lo; segs[0][1] = hi; segs[0][2] = hi; segs[0][3] = lo;
+    segs[1][0] = hi; segs[1][1] = lo; segs[1][2] = hi; segs[1][3] = mid;
+    segs[2][0] = hi; segs[2][1] = lo; segs[2][2] = mid; segs[2][3] = lo; nseg = 3;
   } else if (shape == 18) {
-    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = hi; segs[0][3] = hi;
-    segs[1][0] = hi; segs[1][1] = hi; segs[1][2] = hi - head; segs[1][3] = hi;
-    segs[2][0] = hi; segs[2][1] = hi; segs[2][2] = hi; segs[2][3] = hi - head; nseg = 3;
+    segs[0][0] = lo; segs[0][1] = lo; segs[0][2] = hi; segs[0][3] = hi;
+    segs[1][0] = hi; segs[1][1] = hi; segs[1][2] = hi; segs[1][3] = mid;
+    segs[2][0] = hi; segs[2][1] = hi; segs[2][2] = mid; segs[2][3] = hi; nseg = 3;
   } else if (shape == 19) {
-    segs[0][0] = mid; segs[0][1] = mid; segs[0][2] = lo; segs[0][3] = hi;
-    segs[1][0] = lo; segs[1][1] = hi; segs[1][2] = lo + head; segs[1][3] = hi;
-    segs[2][0] = lo; segs[2][1] = hi; segs[2][2] = lo; segs[2][3] = hi - head; nseg = 3;
+    segs[0][0] = hi; segs[0][1] = lo; segs[0][2] = lo; segs[0][3] = hi;
+    segs[1][0] = lo; segs[1][1] = hi; segs[1][2] = lo; segs[1][3] = mid;
+    segs[2][0] = lo; segs[2][1] = hi; segs[2][2] = mid; segs[2][3] = hi; nseg = 3;
   } else if (shape == 20) {
     rects[0][0] = lo; rects[0][1] = lo; rects[0][2] = mid - gap; rects[0][3] = mid - gap; nrect = 1;
   } else if (shape == 21) {
@@ -1342,7 +1369,7 @@ static int decode_found(
   LccDecodeMeta *meta
 ) {
   LccLayout probe;
-  const LccPaletteInfo *l1 = lcc_palette("L1", 0);
+  const LccPaletteInfo *l1 = lcc_palette("G10", 0);
   if (!l1 || !lcc_make_layout(l1, found->version, &probe)) return LCC_ERR;
   FormatInfo fmt;
   if (!read_format(image, found, variant, &probe, &fmt)) {
@@ -1558,12 +1585,12 @@ static int decode_found(
   BitWriter writer = { 0 };
   const int bits_per = palette->bits;
   for (int i = 0; i < D; i++) {
-    if (strcmp(palette->name, "L1") == 0) bw_bit(&writer, symbols[i] & 1);
+    if (strcmp(palette->name, "G10") == 0) bw_bit(&writer, symbols[i] & 1);
     else bw_bits(&writer, symbols[i], bits_per);
   }
   int nbytes = 0;
   uint8_t *packed = bw_finish(&writer, &nbytes);
-  const int capacity_bits = strcmp(palette->name, "L1") == 0 ? D : D * bits_per;
+  const int capacity_bits = strcmp(palette->name, "G10") == 0 ? D : D * bits_per;
   const int S = capacity_bits / 8;
   if (S <= 0 || nbytes < S) {
     free(packed);
@@ -1582,7 +1609,7 @@ static int decode_found(
     return LCC_ERR;
   }
   free(packed);
-  whiten(rs, rs_len, fmt.seed);
+  whiten(rs, rs_len, fmt.mode_id == 7 ? 0 : fmt.seed);
   uint8_t *out = NULL;
   int out_len = 0;
   if (!parse_payload(rs, rs_len, &out, &out_len)) {
@@ -1604,7 +1631,7 @@ static int decode_found(
   meta->min_delta_e = palette->min_delta_e;
   meta->constraint = 0;
   meta->harmony = fmt.harmony;
-  meta->seed = fmt.seed;
+  meta->seed = fmt.mode_id == 7 ? 0 : fmt.seed;
   meta->shape_set = palette->shape_set > 0 ? palette->shape_set : 1;
   meta->bits_per_module = bits_per;
   meta->format_blocks = layout.blocks;

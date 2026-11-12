@@ -10,7 +10,7 @@
  *   2 blocks/copy  : mode(3) + ecc(2) + constraint(1) + palette(2) + seed(2)
  *   3 blocks/copy  : mode(3) + ecc(2) + constraint(1) + palette(2) + seed(6) + flags(1)
  *
- * Mode is the layer id (L1/L2a/L2b/L3c/L3d/L4e/L4f).  Version/N is derived
+ * Mode is the base layer id (G10/G20/G30/C40/C50/C60/C80).  Version/N is derived
  * from the finder-centre distance and timing pattern.
  */
 
@@ -55,7 +55,7 @@ export function packFormatPayload({
   const actualModeId = isShape ? 7 : modeId;
   const paletteBits = isShape ? (shapeLayerId & 3) : paletteBitsOf(paletteMode, harmony);
   // Shape layers force constraint off, so the constraint bit is reused as the
-  // shape extension bit.  This lets L3t (16 colors + shapes) use the 2-block
+  // shape extension bit.  This lets C43 (16 colors + shapes) use the 2-block
   // format at N=25 instead of being forced to N>=57.
   const constraintBit = isShape ? (shapeExt ? 1 : 0) : (constraint ? 1 : 0);
   const flag = compressed || encrypted ? 1 : 0;

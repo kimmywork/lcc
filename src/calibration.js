@@ -1,10 +1,10 @@
 /**
  * In-code calibration.
  *
- * L1: black/white threshold.
- * L2a/L2b: map measured luminance through the 16-block reference gray ramp,
+ * G10: black/white threshold.
+ * G20/G30: map measured luminance through the 16-block reference gray ramp,
  *          then classify to the data palette's 4/8 gray levels.
- * L3c/L3d/L4e/L4f: 3x4 affine colour correction fitted from the palette
+ * C40/C50/C60/C80: 3x4 affine colour correction fitted from the palette
  *          samples, then CIELAB nearest-neighbour classification.
  *
  * Every calibrator exposes per-symbol costs for Viterbi constraint correction.
@@ -73,7 +73,7 @@ function argmin(costs) {
 }
 
 export function buildCalibrator({ layerName, layout, paletteInfo, sampler, threshold }) {
-  if (layerName === 'L1') {
+  if (layerName === 'G10') {
     const costs = (rgb) => {
       const d = luminance(rgb) - threshold;
       return [Math.max(0, d) ** 2, Math.max(0, -d) ** 2];

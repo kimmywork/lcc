@@ -106,7 +106,6 @@ function shapeGeometry(shapeIndex, size, inset) {
   const squareInset = Math.max(inset, size >= 4 ? Math.round(size / 4) : size / 4);
   const slo = squareInset;
   const shi = size - squareInset;
-  const head = Math.max(inset * 2, size / 6);
   const gap = Math.max(inset, size * 0.08);
   const segments = [];
   const fills = [];
@@ -158,48 +157,50 @@ function shapeGeometry(shapeIndex, size, inset) {
       add(mid, lo, hi, hi);
       break;
 
-    // Midline arrows: half shaft plus a short V head.
+    // Midline arrows: the full center line plus the diagonals of the two
+    // quarter-squares that meet at the tip.
     case 12: // left
-      add(mid, mid, lo, mid);
-      add(lo, mid, lo + head, mid - head);
-      add(lo, mid, lo + head, mid + head);
+      add(lo, mid, hi, mid);
+      add(lo, mid, mid, lo);
+      add(lo, mid, mid, hi);
       break;
     case 13: // up
-      add(mid, mid, mid, lo);
-      add(mid, lo, mid - head, lo + head);
-      add(mid, lo, mid + head, lo + head);
+      add(mid, lo, mid, hi);
+      add(mid, lo, lo, mid);
+      add(mid, lo, hi, mid);
       break;
     case 14: // right
-      add(mid, mid, hi, mid);
-      add(hi, mid, hi - head, mid - head);
-      add(hi, mid, hi - head, mid + head);
+      add(lo, mid, hi, mid);
+      add(hi, mid, mid, lo);
+      add(hi, mid, mid, hi);
       break;
     case 15: // down
-      add(mid, mid, mid, hi);
-      add(mid, hi, mid - head, hi - head);
-      add(mid, hi, mid + head, hi - head);
+      add(mid, lo, mid, hi);
+      add(mid, hi, lo, mid);
+      add(mid, hi, hi, mid);
       break;
 
-    // Diagonal arrows.
+    // Diagonal arrows: the full diagonal plus the two half-edges of the
+    // quarter-square at the tip.
     case 16: // nw
-      add(mid, mid, lo, lo);
-      add(lo, lo, lo + head, lo);
-      add(lo, lo, lo, lo + head);
+      add(lo, lo, hi, hi);
+      add(lo, lo, lo, mid);
+      add(lo, lo, mid, lo);
       break;
     case 17: // ne
-      add(mid, mid, hi, lo);
-      add(hi, lo, hi - head, lo);
-      add(hi, lo, hi, lo + head);
+      add(lo, hi, hi, lo);
+      add(hi, lo, hi, mid);
+      add(hi, lo, mid, lo);
       break;
     case 18: // se
-      add(mid, mid, hi, hi);
-      add(hi, hi, hi - head, hi);
-      add(hi, hi, hi, hi - head);
+      add(lo, lo, hi, hi);
+      add(hi, hi, hi, mid);
+      add(hi, hi, mid, hi);
       break;
     case 19: // sw
-      add(mid, mid, lo, hi);
-      add(lo, hi, lo + head, hi);
-      add(lo, hi, lo, hi - head);
+      add(hi, lo, lo, hi);
+      add(lo, hi, lo, mid);
+      add(lo, hi, mid, hi);
       break;
 
     // One filled quarter block.
