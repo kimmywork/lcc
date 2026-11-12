@@ -10,7 +10,7 @@ import { makeLayout } from '../src/layout.js';
 import { bch15Decode, bch15Encode } from '../src/ecc/bch15.js';
 import { rsDecode, rsEncode } from '../src/ecc/rs.js';
 import { encode } from '../src/encoder.js';
-import { LAYERS, LEGACY_LAYER_ALIASES, resolveLayerName, resolveShapeLayer } from '../src/constants.js';
+import { LAYERS, LEGACY_LAYER_ALIASES, SHAPE_LAYER_BY_ID, resolveLayerName, resolveShapeLayer } from '../src/constants.js';
 import { buildFrame, parseFrame } from '../src/frame.js';
 import { generatePalette } from '../src/palettes.js';
 import { decodePNG, encodePNG } from '../src/png.js';
@@ -268,6 +268,35 @@ test('canonical layer matrix and legacy aliases are consistent', () => {
     assert.equal(resolveLayerName(legacy), canonical, `${legacy} alias`);
     assert.ok(LAYERS[canonical], `${canonical} exists`);
   }
+});
+
+test('legacy layer lookups and shape-map export remain available', () => {
+  assert.equal(LAYERS.L1, LAYERS.G10);
+  assert.equal(LAYERS.L3c, LAYERS.C40);
+  assert.equal(Object.keys(LAYERS).includes('L1'), false);
+  assert.equal(SHAPE_LAYER_BY_ID.get(1), 'G13');
+  assert.throws(
+    () => encode('shape seed', { layer: 'G13', width: 512, height: 512, seed: 1 }),
+    /shape layers reserve the format seed field/,
+  );
+});
+
+test('renderSVG accepts a layer object', () => {
+  const result = encode('svg object', {
+    layer: 'C23',
+    width: 512,
+    height: 512,
+    mode: 'fill',
+    constraint: false,
+    maxModulePx: 32,
+  });
+  const svg = renderSVG({
+    symbols: result.symbols,
+    layout: result.layout,
+    palette: result.paletteInfo.palette,
+    layer: LAYERS.C23,
+  });
+  assert.ok(svg.includes('<line'), 'shape strokes are rendered');
 });
 
 test('all 32 shape masks are non-empty and distinct', () => {

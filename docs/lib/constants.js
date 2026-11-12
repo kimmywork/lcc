@@ -511,6 +511,26 @@ export function resolveLayerName(name) {
   return LEGACY_LAYER_ALIASES.get(name) ?? name;
 }
 
+// Keep legacy `LAYERS['L1']` lookups working without putting aliases into
+// canonical enumeration (Object.keys/values/entries).  This matters for
+// scripts that inspect LAYERS to build palette tables or UI lists.
+for (const [legacy, canonical] of LEGACY_LAYER_ALIASES) {
+  Object.defineProperty(LAYERS, legacy, {
+    value: LAYERS[canonical],
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+}
+
+// Legacy view: the original 8-shape slot ids, now pointing at canonical names.
+export const SHAPE_LAYER_BY_ID = new Map([
+  [0, 'C30'],
+  [1, 'G13'],
+  [2, 'G23'],
+  [3, 'C33'],
+]);
+
 // Shape layers use the mode=7 escape and are not addressable by a 3-bit mode
 // id.  Keep LAYER_BY_ID for the normal layers only.
 export const LAYER_BY_ID = new Map(

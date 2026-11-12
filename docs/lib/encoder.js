@@ -241,6 +241,11 @@ export function encode(payload, options = {}) {
   if (!layer) throw new Error(`LCC: unknown layer ${layerName}`);
 
   const isShapeLayer = !!layer.shapeSetSize;
+  if (isShapeLayer && (options.seed ?? 0) !== 0) {
+    throw new Error(
+      'LCC: shape layers reserve the format seed field for the shape variant; options.seed must be 0',
+    );
+  }
   const paletteMode = isShapeLayer ? 'maxmin' : (options.paletteMode ?? 'maxmin');
   const harmony = isShapeLayer ? false : (options.harmony ?? false);
   let constraint = options.constraint ?? layer.defaultConstraint;

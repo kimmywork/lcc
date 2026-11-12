@@ -29,7 +29,9 @@ export function renderSVG({
   const N = layout.N;
   const total = N + 2 * quietZone;
   const size = total * moduleSize;
-  const layerInfo = (layer ? LAYERS[resolveLayerName(layer)] : LAYERS[layout.layer]) ?? null;
+  const layerInfo = layer && typeof layer === 'object'
+    ? layer
+    : (layer ? LAYERS[resolveLayerName(layer)] : LAYERS[layout.layer]) ?? null;
   const shapeSetSize = layerInfo?.shapeSetSize ?? 1;
   const colorCount = palette.length;
   const lineWidthPx = shapeLineWidth(moduleSize);

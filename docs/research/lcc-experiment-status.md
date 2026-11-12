@@ -135,7 +135,7 @@
 
 完整矩阵共 27 层：9 个灰度层（G10/G13/G15/G20/G23/G25/G30/G33/G35）和 18 个彩色层（C20/C23/C25/C30/C33/C35/C40/C43/C45/C50/C53/C55/C60/C63/C65/C80/C83/C85）。新增层包括 G25、G33、C2*（4 色 + 无/8/32 符号）、C35、C45、C53、C63、C83。旧 `L*` 名称全部保留为 alias，映射见 README 与 `docs/lcc-spec.md`。
 
-格式层码为 `(shapeExt, palette, seed低2位)`，variant 0 保留原有 8 个 shape 层码；完整表见规范附录 A。形状层固定白化 seed 0。由于新增 4 色/8 色/更高符号层，palette 表从 25 组增至 45 组，`lcc.wasm` 约 211 KB。
+格式层码为 `(shapeExt, palette, seed低2位)`，variant 0 保留原有 8 个 shape 层码；完整表见规范附录 A。形状层固定白化 seed 0；旧版本以非零 seed 写出的形状码不兼容，需要重新生成。由于新增 4 色/8 色/更高符号层，palette 表从 25 组增至 45 组，`lcc.wasm` 约 211 KB。
 
 验证：所有 27 层 JS 编码 + C wasm 解码 round-trip 通过；Web UI 改为按“灰度/彩色、色彩数、符号数”选择；`npm test` 25/25。
 
