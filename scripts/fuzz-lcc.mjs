@@ -25,16 +25,9 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
-import {
-  bch15Decode,
-  bch15Encode,
-  decodeAuto,
-  detectSymbol,
-  encode,
-  rsDecode,
-  rsEncode,
-  LAYERS,
-} from '../src/index.js';
+import { decodeAuto, detectSymbol, encode, LAYERS } from '../src/index.js';
+import { bch15Decode, bch15Encode } from '../src/ecc/bch15.js';
+import { rsDecode, rsEncode } from '../src/ecc/rs.js';
 import { decodePNG, encodePNG } from '../src/png.js';
 import { buildFrame, parseFrame } from '../src/frame.js';
 import { stackCanonicalFrames } from '../src/stack.js';
