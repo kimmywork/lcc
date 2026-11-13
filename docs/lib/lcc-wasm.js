@@ -10,7 +10,21 @@ export function resetWasmInstance() {
   instancePromise = null;
 }
 
+let forcedTrap = false;
+
+/** Test-only hook: make the next protected wasm call throw a RuntimeError. */
+export function forceNextWasmTrap() {
+  forcedTrap = true;
+}
+
 function trapSafe(fn) {
+  if (forcedTrap) {
+    forcedTrap = false;
+    instancePromise = null;
+    const err = new Error('forced wasm trap');
+    err.name = 'RuntimeError';
+    throw err;
+  }
   try {
     return fn();
   } catch (err) {

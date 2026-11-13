@@ -132,8 +132,10 @@ int lcc_api_debug_residuals_h(
   int module_size
 ) {
   size_t bytes = 0;
+  const double Hv[9] = { h0, h1, h2, h3, h4, h5, h6, h7, h8 };
   if (!rgb || !lcc_image_geometry(width, height, &bytes) || rgb_len < bytes ||
-      version < 1 || version > 100 || !lcc_valid_symbol_size(N) || module_size <= 0 || module_size > 64) {
+      version < 1 || version > 100 || !lcc_valid_symbol_size(N) || module_size <= 0 || module_size > 64 ||
+      !lcc_homography_safe(Hv, N)) {
     return reject_debug_residuals(LCC_BAD_INPUT);
   }
   LccImage image = { width, height, rgb };
@@ -221,9 +223,7 @@ int lcc_api_stack(const uint8_t *input, int input_len) {
         goto cleanup;
       }
       if (dets[i].has_h) {
-        for (int h = 0; h < 9; h++) {
-          if (!isfinite(dets[i].H[h]) || fabs(dets[i].H[h]) > 1e9) goto cleanup;
-        }
+        if (!lcc_homography_safe(dets[i].H, dets[i].N)) goto cleanup;
       }
     }
   }

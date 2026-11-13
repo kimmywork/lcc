@@ -28,6 +28,7 @@ import { decodeAutoWasm } from '../docs/lib/lcc-wasm.js';
 import { computeRSBlocks } from '../src/ecc/rs.js';
 import { mulberry32 } from './lib/rng.mjs';
 import { fmt, table } from './lib/stats.mjs';
+import { positiveInt } from './lib/args.mjs';
 
 function parseArgs(argv) {
   const out = { trials: 3, json: null, layers: 'G10,G20,G30,C40,C50,C33', ecc: 'L,M,Q,H' };
@@ -47,7 +48,7 @@ function parseArgs(argv) {
 }
 
 const args = parseArgs(process.argv.slice(2));
-const TRIALS = Math.max(1, Number(args.trials) || 3);
+const TRIALS = positiveInt(args.trials, 'trials', 3, 1000);
 const LAYERS = String(args.layers).split(',').map((s) => s.trim()).filter(Boolean);
 const ECCS = String(args.ecc).split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -104,23 +105,26 @@ function burstDamage(encoded, size, rng) {
   const total = layout.dataCoords.length;
   const start = layout.dataCoords[Math.floor(rng() * total)];
   const color = paletteInfo.palette[paletteInfo.palette.length - 1];
+  const dataCells = new Set(layout.dataCoords.map(([r, c]) => `${r},${c}`));
+  let affected = 0;
   for (let dr = 0; dr < size; dr++) {
     for (let dc = 0; dc < size; dc++) {
       const r = start[0] + dr;
       const c = start[1] + dc;
       if (r >= meta.N || c >= meta.N) continue;
-      if (!layout.dataCoords.some(([rr, cc]) => rr === r && cc === c)) continue;
+      if (!dataCells.has(`${r},${c}`)) continue;
       paintModule(out, meta, r, c, color);
+      affected++;
     }
   }
-  return out;
+  return { image: out, affected };
 }
 
 function formatBandDamage(encoded, copies, bits, rng) {
   const out = clone(encoded.image);
   const { layout, meta, paletteInfo } = encoded;
-  const black = paletteInfo.palette[0];
-  const white = paletteInfo.palette[paletteInfo.palette.length - 1];
+  const black = paletteInfo.palette[layout.blackSymbol];
+  const white = paletteInfo.palette[layout.whiteSymbol];
   const copyList = layout.format.copies.slice(0, copies);
   for (const copy of copyList) {
     for (let b = 0; b < layout.format.blocksPerCopy; b++) {
@@ -168,12 +172,12 @@ function qrDamage(payload, ecc, count, rng) {
   const qr = qrSymbol(payload, ecc);
   const n = qr.modules.size;
   const matrix = Uint8Array.from(qr.modules.data);
-  for (let i = 0; i < count; i++) {
-    const idx = Math.floor(rng() * n * n);
-    matrix[idx] ^= 1;
-  }
+  const target = Math.min(count, n * n);
+  const chosen = new Set();
+  while (chosen.size < target) chosen.add(Math.floor(rng() * n * n));
+  for (const idx of chosen) matrix[idx] ^= 1;
   const qrCopy = { modules: { size: n, data: matrix } };
-  return { image: qrImage(qrCopy), n };
+  return { image: qrImage(qrCopy), n, count: target };
 }
 
 async function decodeLcc(image, payload) {
@@ -266,14 +270,17 @@ async function main() {
       for (const size of [3, 5, 8, 12]) {
         let ok = 0;
         let wrong = 0;
+        let affectedTotal = 0;
         for (let trial = 0; trial < TRIALS; trial++) {
           const rng = mulberry32(0xd100 + trial * 37 + size + layer.length);
           const damaged = burstDamage(encoded, size, rng);
-          const res = await decodeLcc(damaged, payload);
+          const res = await decodeLcc(damaged.image, payload);
           if (res.ok) ok++;
           if (res.wrong) wrong++;
+          affectedTotal += damaged.affected;
         }
-        results.push({ ...rowBase, damage: 'burst', amount: size * size, pct: (100 * size * size) / dataModules, trials: TRIALS, ok, wrong });
+        const affected = Math.round(affectedTotal / TRIALS);
+        results.push({ ...rowBase, damage: 'burst', amount: affected, pct: (100 * affected) / dataModules, trials: TRIALS, ok, wrong });
       }
 
       // Format band damage: 1/2/3 bits in one copy, then in both copies.
@@ -305,11 +312,14 @@ async function main() {
         let wrong = 0;
         for (let trial = 0; trial < TRIALS; trial++) {
           const rng = mulberry32(0xd300 + trial * 43 + count + ecc.charCodeAt(0));
-          const { image, n } = qrDamage(payload, ecc, count, rng);
+          const { image, n, count: applied } = qrDamage(payload, ecc, count, rng);
           const res = decodeQr(image, payload);
           if (res.ok) ok++;
           if (res.wrong) wrong++;
-          if (trial === 0) rowBase.qrModules = n * n;
+          if (trial === 0) {
+            rowBase.qrModules = n * n;
+            rowBase.qrApplied = applied;
+          }
         }
         results.push({
           layer: 'QR',
@@ -320,8 +330,8 @@ async function main() {
           rsBlocks: 0,
           tTotal: 0,
           damage: 'modules',
-          amount: count,
-          pct: (100 * count) / rowBase.qrModules,
+          amount: rowBase.qrApplied,
+          pct: (100 * rowBase.qrApplied) / rowBase.qrModules,
           trials: TRIALS,
           ok,
           wrong,

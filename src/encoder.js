@@ -23,6 +23,7 @@ import {
 import { RankConstraint } from './constraint.js';
 import { computeRSBlocks, rsEncodeBlocks } from './ecc/rs.js';
 import { buildFrame } from './frame.js';
+import { MAX_IMAGE_PIXELS } from './image-utils.js';
 import { packFormatPayload, writeFormatBand } from './format/format-band.js';
 import { makeLayout } from './layout.js';
 import { generatePalette } from './palettes.js';
@@ -399,8 +400,9 @@ export function encode(payload, options = {}) {
   });
   writeFormatBand(symbols, layout, chunks);
 
-  if ((layout.N + 2 * quietZone) * chosenModuleSize > 32768) {
-    throw new Error('LCC: rendered image exceeds the 32768 px limit');
+  const renderedSide = (layout.N + 2 * quietZone) * chosenModuleSize;
+  if (renderedSide > 32768 || renderedSide * renderedSide > MAX_IMAGE_PIXELS) {
+    throw new Error('LCC: rendered image exceeds the pixel budget');
   }
   const image = render(
     symbols,

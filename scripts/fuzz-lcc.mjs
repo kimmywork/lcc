@@ -97,22 +97,23 @@ async function suite(name, iterations, fn) {
     maxMs: 0,
     errors: {},
   };
+  const findingsBefore = report.findings.length;
   for (let i = 0; i < iterations; i++) {
     const t0 = performance.now();
     try {
       await fn(i, stats);
       stats.ok++;
     } catch (err) {
-      stats.rejected++;
       const kind = errorKind(err);
       stats.errors[kind] = (stats.errors[kind] ?? 0) + 1;
       stats.lastError = err instanceof Error ? err.message : String(err);
-      if (kind === 'wasm-trap') {
-        fail(`${name}: wasm trapped on a malformed input`, String(err.message).slice(0, 80));
-      }
+      stats.unexpected++;
       if (kind === 'non-error-throw') {
-        stats.unexpected++;
         fail(`${name}: threw a non-Error value`, String(err));
+      } else if (kind === 'wasm-trap') {
+        fail(`${name}: wasm trapped on a malformed input`, String(err.message).slice(0, 80));
+      } else {
+        fail(`${name}: unexpected exception`, String(err.message ?? err).slice(0, 120));
       }
     }
     const ms = performance.now() - t0;
@@ -123,8 +124,7 @@ async function suite(name, iterations, fn) {
       report.slowest.push({ suite: name, iteration: i, ms });
     }
   }
-  const findingsBefore = report.findings.length;
-  stats.findings = findingsBefore;
+  stats.findings = report.findings.length - findingsBefore;
   report.suites[name] = stats;
   console.log(
     `${name.padEnd(8)} runs=${String(stats.runs).padStart(4)} ok=${String(stats.ok).padStart(4)} `
@@ -156,17 +156,17 @@ function makeFixture(layer, payloadBytes = 96, seed = 1) {
 // ---------------------------------------------------------------------------
 // encode: random inputs and options
 // ---------------------------------------------------------------------------
-async function encodeSuite() {
+async function encodeSuite(i, stats) {
   const hostile = rng() < 0.5;
   const layer = pick(rng, LAYER_NAMES);
   const isShape = !!LAYERS[layer].shapeSetSize;
-  const n = int(rng, 0, 220);
+  const n = hostile ? int(rng, 0, 220) : int(rng, 0, 4);
   const useText = rng() < 0.6;
   const payload = useText
     ? text(rng, n, rng() < 0.3 ? 'cjk' : 'ascii')
     : bytes(rng, n);
-  const width = hostile ? pick(rng, [128, 256, 512, 1024, 1, 0, -8, NaN]) : 512;
-  const height = hostile ? pick(rng, [width, 128, 512, 1024]) : 512;
+  const width = hostile ? pick(rng, [128, 256, 512, 1024, 1, 0, -8, NaN]) : 2048;
+  const height = hostile ? pick(rng, [width, 128, 512, 1024]) : 2048;
   const moduleSize = hostile && rng() < 0.4
     ? pick(rng, [0, -4, 3, 8, 16, 32, 64, 65, NaN])
     : undefined;
@@ -190,13 +190,24 @@ async function encodeSuite() {
     moduleSize,
     quietZone,
     version,
-    seed: isShape ? 0 : pick(rng, [undefined, 0, 1, 2, 63, 64, -1, NaN]),
+    seed: isShape ? 0 : (hostile ? pick(rng, [undefined, 0, 1, 2, 63, 64, -1, NaN]) : pick(rng, [undefined, 0, 1, 2, 63])),
     compressed: rng() < 0.5,
     encrypted: rng() < 0.5,
-    paletteMode: isShape ? 'maxmin' : pick(rng, ['maxmin', 'harmony', 'bogus']),
+    paletteMode: isShape ? 'maxmin' : (hostile ? pick(rng, ['maxmin', 'harmony', 'bogus']) : pick(rng, ['maxmin', 'harmony'])),
     harmony: isShape ? false : rng() < 0.2,
   };
-  const result = encode(payload, options);
+  let result;
+  try {
+    result = encode(payload, options);
+  } catch (err) {
+    if (hostile && err instanceof Error) {
+      stats.rejected++;
+      stats.errors[errorKind(err)] = (stats.errors[errorKind(err)] ?? 0) + 1;
+      return;
+    }
+    err.message += ` [options=${JSON.stringify(options)} payload=${n}]`;
+    throw err;
+  }
   if (!result || !result.image || result.image.width <= 0 || result.image.height <= 0) {
     throw new Error('encode returned an invalid image');
   }
@@ -219,13 +230,23 @@ async function encodeSuite() {
 // ---------------------------------------------------------------------------
 // decode: random garbage images (small, to keep it fast)
 // ---------------------------------------------------------------------------
-async function decodeSuite() {
+async function decodeSuite(i, stats) {
   const width = int(rng, 1, 48);
   const height = int(rng, 1, 48);
   const data = bytes(rng, width * height * 3);
-  const result = decodeAuto({ width, height, data }, {
-    detector: pick(rng, ['axis', 'perspective', 'auto']),
-  });
+  let result;
+  try {
+    result = decodeAuto({ width, height, data }, {
+      detector: pick(rng, ['axis', 'perspective', 'auto']),
+    });
+  } catch (err) {
+    if (err instanceof Error) {
+      stats.rejected++;
+      stats.errors[errorKind(err)] = (stats.errors[errorKind(err)] ?? 0) + 1;
+      return;
+    }
+    throw err;
+  }
   if (result) fail('decode: accepted random garbage', `${width}x${height}`);
 }
 
@@ -300,7 +321,7 @@ function getCorruptFixture(layer, size) {
   return corruptFixtures.get(key);
 }
 
-async function corruptSuite() {
+async function corruptSuite(i, stats) {
   const layer = pick(rng, ['G10', 'G20', 'G30', 'C40', 'C50', 'C33']);
   const size = int(rng, 8, layer === 'G10' ? 96 : 192);
   const { encoded, payload } = getCorruptFixture(layer, size);
@@ -311,7 +332,10 @@ async function corruptSuite() {
   try {
     decoded = decodeAuto(damaged, { detector: 'axis' });
   } catch (err) {
-    if (err instanceof Error) return;
+    if (err instanceof Error) {
+      stats.rejected++;
+      return;
+    }
     throw err;
   }
   const got = Buffer.from(decoded.payload).toString('hex');
@@ -324,13 +348,14 @@ async function corruptSuite() {
 // ---------------------------------------------------------------------------
 // png: random bytes and mutated valid PNGs
 // ---------------------------------------------------------------------------
-async function pngSuite() {
+async function pngSuite(i, stats) {
   const input = bytes(rng, int(rng, 0, 256));
   try {
-    decodePNG(input);
-    fail('png: accepted random bytes as a PNG');
+    const image = decodePNG(input);
+    fail('png: accepted random bytes as a PNG', `${image.width}x${image.height}`);
   } catch (err) {
     if (!(err instanceof Error)) throw err;
+    stats.rejected++;
   }
 
   if (rng() < 0.5) {
@@ -342,13 +367,15 @@ async function pngSuite() {
       const pos = int(rng, 0, mutated.length - 1);
       mutated[pos] ^= 1 + int(rng, 0, 254);
     }
+    let image = null;
     try {
-      const image = decodePNG(mutated);
-      if (image.width * image.height * 3 !== image.data.length) {
-        fail('png: decoded image has inconsistent dimensions');
-      }
+      image = decodePNG(mutated);
     } catch (err) {
       if (!(err instanceof Error)) throw err;
+      stats.rejected++;
+    }
+    if (image && image.width * image.height * 3 !== image.data.length) {
+      fail('png: decoded image has inconsistent dimensions');
     }
   }
 }
@@ -366,7 +393,7 @@ function hamming(a, b) {
   return n;
 }
 
-async function eccSuite() {
+async function eccSuite(i, stats) {
   if (rng() < 0.6) {
     const n = int(rng, 4, 120);
     const parity = int(rng, 1, Math.max(1, Math.min(40, n - 1)));
@@ -408,6 +435,7 @@ async function eccSuite() {
       }
     } catch (err) {
       if (!(err instanceof Error)) throw err;
+      stats.rejected++;
     }
   }
 }
@@ -424,7 +452,7 @@ const wasmFixture = (() => {
   return { encoded, payload };
 })();
 
-async function wasmSuite() {
+async function wasmSuite(i, stats) {
   if (rng() < 0.5) {
     const decoded = await decodeAutoWasm(wasmFixture.encoded.image, { detector: 'axis' });
     if (!decoded || Buffer.from(decoded.payload).toString('hex') !== Buffer.from(wasmFixture.payload).toString('hex')) {
@@ -436,8 +464,18 @@ async function wasmSuite() {
     const width = int(rng, 1, 64);
     const height = int(rng, 1, 64);
     const data = bytes(rng, width * height * 3);
-    const result = await decodeAutoWasm({ width, height, data }, { detector: 'axis' });
-    if (result !== null) throw new Error('wasm: decoded random garbage');
+    let result = null;
+    try {
+      result = await decodeAutoWasm({ width, height, data }, { detector: 'axis' });
+    } catch (err) {
+      if (err instanceof Error) {
+        stats.rejected++;
+        stats.errors[errorKind(err)] = (stats.errors[errorKind(err)] ?? 0) + 1;
+        return;
+      }
+      throw err;
+    }
+    if (result !== null) fail('wasm: decoded random garbage', `${width}x${height}`);
     return;
   }
   const detections = [detectSymbol(wasmFixture.encoded.image), detectSymbol(wasmFixture.encoded.image)];
@@ -604,7 +642,7 @@ async function wasmRawSuite() {
 // ---------------------------------------------------------------------------
 // stack: valid detections (camera path building block)
 // ---------------------------------------------------------------------------
-async function stackSuite() {
+async function stackSuite(i, stats) {
   const detections = [detectSymbol(wasmFixture.encoded.image), detectSymbol(wasmFixture.encoded.image)];
   const result = stackCanonicalFrames(
     [wasmFixture.encoded.image, wasmFixture.encoded.image],

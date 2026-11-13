@@ -15,7 +15,7 @@
 import { performance } from 'node:perf_hooks';
 
 import { encode } from '../src/index.js';
-import { decodeAutoWasm, wasmExports, wasmMemoryStats } from '../docs/lib/lcc-wasm.js';
+import { decodeAutoWasm, forceNextWasmTrap, wasmExports, wasmMemoryStats } from '../docs/lib/lcc-wasm.js';
 
 const wasm = await wasmExports();
 
@@ -130,6 +130,27 @@ async function leakProbe(rounds = 100000) {
   };
 }
 
+async function wrapperResetProbe() {
+  const encoded = encode('reset probe', {
+    layer: 'C40', version: 2, moduleSize: 24, width: 512, height: 512, mode: 'fill', constraint: false,
+  });
+  let trapped = false;
+  forceNextWasmTrap();
+  try {
+    await decodeAutoWasm(encoded.image, { detector: 'axis' });
+  } catch (err) {
+    trapped = err?.name === 'RuntimeError';
+  }
+  let recovered = false;
+  try {
+    const decoded = await decodeAutoWasm(encoded.image, { detector: 'axis' });
+    recovered = decoded?.text === 'reset probe';
+  } catch {
+    recovered = false;
+  }
+  return { trapped, recovered };
+}
+
 async function isolationProbe() {
   const encoded = encode('isolation probe', {
     layer: 'C40', version: 2, moduleSize: 24, width: 512, height: 512, mode: 'fill', constraint: false,
@@ -164,12 +185,18 @@ console.log('malformed stack leak:', JSON.stringify(leak, null, 2));
 const isolation = await isolationProbe();
 console.log('post-trap isolation:', JSON.stringify(isolation, null, 2));
 
+const reset = await wrapperResetProbe();
+console.log('wrapper reset:', JSON.stringify(reset, null, 2));
+
 const verdict = [];
 if (leak.growth > 1024 * 1024) {
   verdict.push(`LEAK: ${(leak.growth / 1048576).toFixed(2)} MiB retained after ${leak.rounds} malformed calls`);
 }
 if (isolation.recovered < isolation.trials) {
   verdict.push(`ISOLATION: ${isolation.trials - isolation.recovered}/${isolation.trials} valid decodes failed after a trap`);
+}
+if (!reset.trapped || !reset.recovered) {
+  verdict.push(`WRAPPER RESET: trapped=${reset.trapped} recovered=${reset.recovered}`);
 }
 if (verdict.length) {
   console.log('\nfindings:');

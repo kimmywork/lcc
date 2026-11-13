@@ -29,12 +29,13 @@ test('mutated valid PNGs are rejected or decoded consistently', () => {
     const copy = Buffer.from(png);
     const edits = int(rng, 1, 4);
     for (let e = 0; e < edits; e++) copy[int(rng, 0, copy.length - 1)] ^= 1 + int(rng, 0, 254);
+    let image = null;
     try {
-      const image = decodePNG(copy);
-      assert.equal(image.data.length, image.width * image.height * 3);
+      image = decodePNG(copy);
     } catch (err) {
       assert.ok(err instanceof Error, `edit ${i} threw non-Error`);
     }
+    if (image) assert.equal(image.data.length, image.width * image.height * 3);
   }
 });
 
@@ -65,12 +66,13 @@ test('damaged symbols decode to the exact payload or throw', () => {
       for (let i = 0; i < data.length; i++) {
         data[i] = Math.max(0, Math.min(255, Math.round(encoded.image.data[i] + gaussian(rng) * sigma)));
       }
+      let decoded = null;
       try {
-        const decoded = decodeAuto({ width: encoded.image.width, height: encoded.image.height, data }, { detector: 'axis' });
-        assert.equal(decoded.text, payload, `${layer} sigma ${sigma} wrong payload`);
+        decoded = decodeAuto({ width: encoded.image.width, height: encoded.image.height, data }, { detector: 'axis' });
       } catch (err) {
         assert.ok(err instanceof Error, `${layer} sigma ${sigma} threw non-Error`);
       }
+      if (decoded) assert.equal(decoded.text, payload, `${layer} sigma ${sigma} wrong payload`);
     }
   }
 });
@@ -95,14 +97,17 @@ test('random encoder options succeed with a valid image or throw a descriptive E
       minVersion: gentle ? undefined : pick(rng, [undefined, 1, 5, 101]),
       maxVersion: gentle ? undefined : pick(rng, [undefined, 2, 100, 101]),
     };
+    let result = null;
     try {
-      const result = encode(bytes(rng, int(rng, 0, 180)), options);
-      successes++;
-      assert.ok(result.image.width > 0 && result.image.height > 0);
-      assert.equal(result.image.data.length, result.image.width * result.image.height * 3);
+      result = encode(bytes(rng, int(rng, 0, 180)), options);
     } catch (err) {
       assert.ok(err instanceof Error, `case ${i} threw non-Error`);
       assert.match(err.message, /^LCC:/, `case ${i}: ${err.message}`);
+    }
+    if (result) {
+      successes++;
+      assert.ok(result.image.width > 0 && result.image.height > 0);
+      assert.equal(result.image.data.length, result.image.width * result.image.height * 3);
     }
   }
   assert.ok(successes > 0, 'no random case succeeded');

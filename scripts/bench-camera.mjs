@@ -27,6 +27,7 @@ import { DEGRADATIONS, degrade } from './lib/degrade.mjs';
 import { rasterizeQR, toRGBA } from './lib/qr-image.mjs';
 import { mulberry32 } from './lib/rng.mjs';
 import { fmt, summarize, table } from './lib/stats.mjs';
+import { positiveInt } from './lib/args.mjs';
 
 function parseArgs(argv) {
   const out = { seeds: 3, json: null, layers: 'G10,G20,C40,C33', ecc: 'M' };
@@ -46,7 +47,7 @@ function parseArgs(argv) {
 }
 
 const args = parseArgs(process.argv.slice(2));
-const SEEDS = Math.max(1, Number(args.seeds) || 3);
+const SEEDS = positiveInt(args.seeds, 'seeds', 3, 1000);
 const LAYERS = String(args.layers).split(',').map((s) => s.trim()).filter(Boolean);
 const QR_ECC = String(args.ecc).toUpperCase();
 

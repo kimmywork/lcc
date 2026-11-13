@@ -30,8 +30,9 @@ import {
 } from '../src/index.js';
 import { preprocessVariants } from '../src/preprocess.js';
 import { decodeAutoWasm, wasmMemoryStats } from '../docs/lib/lcc-wasm.js';
-import { mulberry32 } from '../scripts/lib/rng.mjs';
-import { batchMeans, fmt, fmtBytes, summarize, table } from '../scripts/lib/stats.mjs';
+import { mulberry32 } from './lib/rng.mjs';
+import { batchMeans, fmt, fmtBytes, summarize, table } from './lib/stats.mjs';
+import { positiveInt } from './lib/args.mjs';
 
 function parseArgs(argv) {
   const out = { iterations: null, repeat: 300, json: null, quick: false };
@@ -52,9 +53,9 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv.slice(2));
 const quick = args.quick === true;
-const ITER = Number(args.iterations) || (quick ? 8 : 24);
+const ITER = positiveInt(args.iterations, 'iterations', quick ? 8 : 24, 10000);
 const WARMUP = 3;
-const REPEAT = Number(args.repeat) || (quick ? 100 : 300);
+const REPEAT = positiveInt(args.repeat, 'repeat', quick ? 100 : 300, 100000);
 
 function payloadOf(n, seed = 12345) {
   const rng = mulberry32(seed);
@@ -103,7 +104,7 @@ function makeFixture(layer, options, payload) {
   const t1 = performance.now();
   const decoded = decodeAuto(encoded.image, { detector: 'axis' });
   const decodeMs = performance.now() - t1;
-  if (decoded.text !== null && Buffer.from(decoded.payload).toString('hex') !== Buffer.from(payload).toString('hex')) {
+  if (Buffer.from(decoded.payload).toString('hex') !== Buffer.from(payload).toString('hex')) {
     throw new Error(`fixture ${layer}: wrong decode`);
   }
   return { encoded, decoded, encodeMs, decodeMs };
@@ -285,7 +286,6 @@ async function main() {
     };
     for (let i = 0; i < 10; i++) run();
     const before = memory();
-    const wasmBefore = await wasmMemoryStats();
     const times = [];
     const batchSize = Math.max(20, Math.floor(REPEAT / 6));
     let failures = 0;
@@ -300,8 +300,26 @@ async function main() {
       times.push(performance.now() - start);
     }
     const wallMs = performance.now() - t0;
-    const after = memory();
+
+    // Separate WASM loop so wasmDelta measures repeated C decode, not JS.
+    const wasmBefore = await wasmMemoryStats();
+    const wasmRepeat = Math.max(20, Math.floor(REPEAT / 3));
+    const wasmTimes = [];
+    let wasmFailures = 0;
+    const wasmT0 = performance.now();
+    for (let i = 0; i < wasmRepeat; i++) {
+      const start = performance.now();
+      try {
+        const decoded = await decodeAutoWasm(image, { detector: 'axis' });
+        if (!decoded || Buffer.from(decoded.payload).toString('hex') !== expected) wasmFailures++;
+      } catch {
+        wasmFailures++;
+      }
+      wasmTimes.push(performance.now() - start);
+    }
+    const wallWasmMs = performance.now() - wasmT0;
     const wasmAfter = await wasmMemoryStats();
+    const after = memory();
     const batches = batchMeans(times, batchSize);
     const stats = summarize(times);
     const row = {
@@ -316,6 +334,11 @@ async function main() {
       batchMeans: batches,
       driftPct: batches.length > 1 ? ((batches.at(-1) - batches[0]) / batches[0]) * 100 : 0,
       wallMs,
+      wasmIterations: wasmRepeat,
+      wasmFailures,
+      wasmMedianMs: summarize(wasmTimes).median,
+      wasmP99Ms: summarize(wasmTimes).p99,
+      wallWasmMs,
       codesPerSec: 1000 / Math.max(stats.median, 1e-6),
       payloadMiBPerSec: (512 / (1024 * 1024)) / (stats.median / 1000),
       heapDelta: after.heapUsed - before.heapUsed,
@@ -339,6 +362,9 @@ async function main() {
       { key: 'heapDelta', title: 'heap Δ', format: (r) => fmtBytes(r.heapDelta) },
       { key: 'rssDelta', title: 'rss Δ', format: (r) => fmtBytes(r.rssDelta) },
       { key: 'wasmDelta', title: 'wasm Δ', format: (r) => fmtBytes(r.wasmDelta) },
+      { key: 'wasmIterations', title: 'wasm runs' },
+      { key: 'wasmFailures', title: 'wasm fail' },
+      { key: 'wasmMedianMs', title: 'wasm med', format: (r) => `${fmt(r.wasmMedianMs)} ms` },
       { key: 'codesPerSec', title: 'codes/s', format: (r) => fmt(r.codesPerSec, 1) },
       { key: 'payloadMiBPerSec', title: 'payload MiB/s', format: (r) => fmt(r.payloadMiBPerSec, 3) },
     ]));

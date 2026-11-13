@@ -110,8 +110,19 @@ test('encoding is independent of previous encoder calls and call order', () => {
   }
 });
 
+function encodableSpecs() {
+  return matrixSpecs().filter((spec) => {
+    try {
+      encode(new Uint8Array(Buffer.from(spec.payloadHex, 'hex')), spec.options);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 test('a fresh process reproduces the same bytes', () => {
-  const specs = matrixSpecs().filter((_, i) => i % 29 === 0).slice(0, 12);
+  const specs = encodableSpecs().filter((_, i) => i % 29 === 0).slice(0, 12);
   const run = () => JSON.parse(execFileSync(process.execPath, [child, JSON.stringify(specs)], {
     encoding: 'utf8',
     timeout: 120000,
@@ -120,6 +131,9 @@ test('a fresh process reproduces the same bytes', () => {
   const b = run();
   assert.deepEqual(b, a);
   assert.equal(a.length, specs.length);
+  for (const record of a) {
+    assert.ok(record.image && record.symbols && record.meta, `encode failed: ${record.error ?? 'missing hash'}`);
+  }
 });
 
 test('PNG and SVG output are deterministic', () => {

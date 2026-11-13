@@ -157,7 +157,14 @@ static void mode_mismatch(void) {
   if (!small) exit(2);
   fill_random(small, 64);
   fprintf(stderr, "calling lcc_api_decode with 1024x1024 dims and a 64-byte buffer\n");
-  lcc_api_decode(small, 64, 1024, 1024, 0);
+  {
+    const int status = lcc_api_decode(small, 64, 1024, 1024, 0);
+    if (status != LCC_BAD_INPUT) {
+      fprintf(stderr, "mismatch probe: expected LCC_BAD_INPUT, got %d\n", status);
+      free(small);
+      exit(3);
+    }
+  }
   free(small);
 }
 
@@ -169,7 +176,14 @@ static void mode_overflow(void) {
   const size_t len = build_stack(
     packed, 2, 65536, 65536, 0, 0, 0, 100, 21, 1, 1);
   fprintf(stderr, "calling lcc_api_stack with overflowing frame dimensions (%zu bytes)\n", len);
-  lcc_api_stack(packed, (int)len);
+  {
+    const int status = lcc_api_stack(packed, (int)len);
+    if (status != LCC_BAD_INPUT) {
+      fprintf(stderr, "overflow probe: expected LCC_BAD_INPUT, got %d\n", status);
+      free(packed);
+      exit(3);
+    }
+  }
   free(packed);
 }
 

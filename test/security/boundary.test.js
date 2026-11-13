@@ -2,14 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 
-import { decodeAuto, encode } from '../../src/index.js';
+import { decodeAuto, encode, stackCanonicalFrames } from '../../src/index.js';
 import { decodePNG, encodePNG } from '../../src/png.js';
-import { decodeAutoWasm, stackCanonicalFramesWasm } from '../../docs/lib/lcc-wasm.js';
+import { crc32 } from '../../src/ecc/crc32.js';
+import { debugResidualsForcedWasm, decodeAutoWasm, stackCanonicalFramesWasm } from '../../docs/lib/lcc-wasm.js';
 import { bytes, int, mulberry32 } from '../../scripts/lib/rng.mjs';
 
-function mutatePNG(png, mutate) {
+function mutatePNG(png, mutate, { fixCrc = false } = {}) {
   const copy = Buffer.from(png);
   mutate(copy);
+  if (fixCrc) {
+    // IHDR: length at 8..12, type 12..16, data 16..29, CRC 29..33.
+    copy.writeUInt32BE(crc32(Buffer.concat([copy.subarray(12, 16), copy.subarray(16, 29)])), 29);
+  }
   return copy;
 }
 
@@ -24,16 +29,17 @@ test('PNG parser rejects random input and absurd headers without crashing', () =
     layer: 'G20', version: 2, moduleSize: 16, width: 512, height: 512, mode: 'compact',
   }).image);
 
-  for (const [name, mutate] of [
-    ['bad signature', (b) => { b[0] ^= 0xff; }],
-    ['huge width', (b) => { b.writeUInt32BE(0xffffffff, 16); }],
-    ['huge height', (b) => { b.writeUInt32BE(0xffffffff, 20); }],
-    ['bad bit depth', (b) => { b[24] = 16; }],
-    ['interlaced', (b) => { b[28] = 1; }],
-    ['bad color type', (b) => { b[25] = 0; }],
+  for (const [name, mutate, pattern, fixCrc] of [
+    ['bad signature', (b) => { b[0] ^= 0xff; }, /bad signature/, false],
+    ['huge width', (b) => { b.writeUInt32BE(0xffffffff, 16); }, /image too large/, true],
+    ['huge height', (b) => { b.writeUInt32BE(0xffffffff, 20); }, /image too large/, true],
+    ['bad bit depth', (b) => { b[24] = 16; }, /unsupported bit depth/, true],
+    ['interlaced', (b) => { b[28] = 1; }, /interlaced/, true],
+    ['bad color type', (b) => { b[25] = 0; }, /unsupported color type/, true],
+    ['bad CRC', (b) => { b[24] ^= 1; }, /bad CRC/, false],
   ]) {
     const t0 = performance.now();
-    assert.throws(() => decodePNG(mutatePNG(valid, mutate)), Error, name);
+    assert.throws(() => decodePNG(mutatePNG(valid, mutate, { fixCrc })), pattern, name);
     assert.ok(performance.now() - t0 < 2000, `${name} was slow`);
   }
 });
@@ -93,6 +99,27 @@ test('C API rejects mismatched buffer lengths without a trap', async () => {
   );
 });
 
+test('forced-debug and stack homographies reject unsafe projections', async () => {
+  const encoded = encode('homography boundary', {
+    layer: 'C40', version: 2, moduleSize: 24, width: 512, height: 512, mode: 'fill', constraint: false,
+  });
+  const zero = Array(9).fill(0);
+  const debug = await debugResidualsForcedWasm(encoded.image, zero, 2, 25, 24);
+  assert.equal(debug.status, 2);
+  const huge = [1e12, 0, 1e12, 0, 1e12, 1e12, 0, 0, 1e-3];
+  await assert.rejects(
+    stackCanonicalFramesWasm(
+      [encoded.image, encoded.image],
+      [
+        { version: 2, N: 25, s: 24, score: 1, has_h: true, homography: huge },
+        { version: 2, N: 25, s: 24, score: 1, has_h: true, homography: huge },
+      ],
+      { moduleSize: 16, quietZone: 4 },
+    ),
+    /stack failed/,
+  );
+});
+
 test('C stack parser rejects overflowing N/module combinations without a trap', async () => {
   const encoded = encode('stack boundary', {
     layer: 'C40', version: 2, moduleSize: 24, width: 512, height: 512, mode: 'fill', constraint: false,
@@ -131,6 +158,19 @@ test('PNG parser enforces a pixel budget before inflating', () => {
     layer: 'G20', version: 2, moduleSize: 16, width: 512, height: 512, mode: 'compact',
   }).image);
   assert.throws(() => decodePNG(png, { maxPixels: 100 }), /too large/);
+});
+
+test('JS stack builder rejects output above the shared pixel budget', () => {
+  const frame = encode('stack budget', {
+    layer: 'C40', version: 2, moduleSize: 24, width: 512, height: 512, mode: 'fill', constraint: false,
+  }).image;
+  const det = { version: 40, N: 177, s: 32, score: 1 };
+  assert.throws(
+    () => stackCanonicalFrames([frame, frame], [det, det], {
+      quietZone: 4, moduleSize: 32, maxDimension: 8192,
+    }),
+    /pixel budget/,
+  );
 });
 
 test('JS decoder rejects inconsistent image objects before allocation', () => {

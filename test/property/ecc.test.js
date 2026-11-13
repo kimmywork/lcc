@@ -92,11 +92,14 @@ test('frame property: payload and CRC round-trip, header mutations never yield a
     for (let flip = 0; flip < 5; flip++) {
       const bad = Uint8Array.from(frame);
       bad[int(rand, 0, bad.length - 1)] ^= 1 << int(rand, 0, 7);
+      let parsedBad = null;
       try {
-        const parsedBad = parseFrame(bad);
-        assert.equal(Buffer.from(parsedBad.payload).toString('hex'), Buffer.from(payload).toString('hex'));
+        parsedBad = parseFrame(bad);
       } catch (err) {
         assert.ok(err instanceof Error);
+      }
+      if (parsedBad) {
+        assert.equal(Buffer.from(parsedBad.payload).toString('hex'), Buffer.from(payload).toString('hex'));
       }
     }
   }

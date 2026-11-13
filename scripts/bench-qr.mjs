@@ -32,6 +32,7 @@ import { encode, decodeAuto, generatePalette, makeLayout, capacityFor } from '..
 import { encodePNG } from '../src/png.js';
 import { mulberry32 } from '../scripts/lib/rng.mjs';
 import { fmt, summarize, table } from '../scripts/lib/stats.mjs';
+import { positiveInt } from './lib/args.mjs';
 
 function parseArgs(argv) {
   const out = { json: null, qrEcc: 'M', canvas: 1024 };
@@ -52,7 +53,7 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv.slice(2));
 const QR_ECC = String(args.qrEcc).toUpperCase();
-const CANVAS = Number(args.canvas) || 1024;
+const CANVAS = positiveInt(args.canvas, 'canvas', 1024, 8192);
 const ITER = 12;
 
 function randomBytes(n, seed = 2026) {
@@ -155,14 +156,14 @@ async function main() {
   for (const item of payloadCases()) {
     const original = payloadBytesOf(item);
     const payloadBytes = original.length;
-    const qr = rasterizeQR(item.data, { binary: !!item.binary, target: CANVAS });
+    const qr = rasterizeQR(item.data, { binary: !!item.binary, target: CANVAS, ecc: QR_ECC });
     const qrPadded = padToCanvas(qr.image, CANVAS);
     const qrPng = encodePNG(qrPadded);
     const qrRgba = toRGBA(qrPadded);
     const qrDecoded = jsQR(qrRgba, qrPadded.width, qrPadded.height);
     const qrOk = qrDecoded ? hex(qrDecoded.binaryData) === hex(original) : false;
     const qrDecode = timeIt(() => jsQR(qrRgba, qrPadded.width, qrPadded.height));
-    const qrEncode = timeIt(() => rasterizeQR(item.data, { binary: !!item.binary, target: CANVAS }));
+    const qrEncode = timeIt(() => rasterizeQR(item.data, { binary: !!item.binary, target: CANVAS, ecc: QR_ECC }));
     const qrRow = {
       case: item.name,
       payloadBytes,
@@ -197,14 +198,16 @@ async function main() {
       }
       const padded = padToCanvas(encoded.image, CANVAS);
       const png = encodePNG(padded);
-      let ok = false;
-      try {
-        const decoded = decodeAuto(padded, { detector: 'axis' });
-        ok = hex(decoded.payload) === hex(original);
-      } catch {
-        ok = false;
-      }
-      const decode = timeIt(() => decodeAuto(padded, { detector: 'axis' }));
+      const timedDecode = () => {
+        try {
+          return decodeAuto(padded, { detector: 'axis' });
+        } catch {
+          return null;
+        }
+      };
+      const decodedLcc = timedDecode();
+      const ok = decodedLcc ? hex(decodedLcc.payload) === hex(original) : false;
+      const decode = timeIt(timedDecode);
       const encodeStats = timeIt(() => encode(item.data, {
         layer,
         width: CANVAS,

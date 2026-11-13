@@ -8,7 +8,7 @@
  * axis-aligned decoder.
  */
 
-import { sampleImageBilinear, validateImage } from './image-utils.js';
+import { MAX_IMAGE_PIXELS, sampleImageBilinear, validateImage } from './image-utils.js';
 
 function groupKey(det) {
   return `${det.version}|${det.N}`;
@@ -89,6 +89,9 @@ export function stackCanonicalFrames(frames, detections, options = {}) {
 
   const width = total * moduleSize;
   const height = total * moduleSize;
+  if (width * height > MAX_IMAGE_PIXELS) {
+    throw new Error('stack: output image exceeds the pixel budget');
+  }
   const sum = new Float32Array(width * height * 3);
   const counts = new Uint16Array(width * height);
   const noiseSamples = new Map();

@@ -111,97 +111,169 @@ function thresholdFunction(threshold, width, height) {
   };
 }
 
-export function preprocessVariants(image) {
+const ADAPTIVE_CONFIGS = [
+  ['1/8', 0.15],
+  ['1/16', 0.10],
+  ['1/4', 0.20],
+];
+
+export const PREPROCESS_NAMES = [
+  'otsu',
+  'otsu+close',
+  'adaptive-1/8',
+  'adaptive-1/8+close',
+  'adaptive-1/16',
+  'adaptive-1/16+close',
+  'adaptive-1/4',
+  'adaptive-1/4+close',
+  'value-otsu',
+  'value-otsu+close',
+  'value-adaptive-1/8',
+  'value-adaptive-1/8+close',
+  'value-adaptive-1/16',
+  'value-adaptive-1/16+close',
+  'value-adaptive-1/4',
+  'value-adaptive-1/4+close',
+];
+
+function adaptiveWindow(kind, minSide) {
+  if (kind === '1/8') return Math.max(15, Math.floor(minSide / 8));
+  if (kind === '1/16') return Math.max(11, Math.floor(minSide / 16));
+  return Math.max(21, Math.floor(minSide / 4));
+}
+
+/**
+ * Lazy variant factory.  Building all 16 masks on every decode was ~97% of the
+ * JS decode time; the Axis path usually succeeds with the first variant.  The
+ * shared gray/value/integral buffers are still memoised, so eager
+ * preprocessVariants() and lazy decodeAuto() share the same code.
+ */
+export function createPreprocessor(image) {
   const { width, height } = image;
-  const gray = grayscale(image);
-  const stats = robustThreshold(gray);
-  const otsu = stats.threshold;
-
-  const otsuMask = new Uint8Array(width * height);
-  for (let i = 0; i < gray.length; i++) otsuMask[i] = gray[i] < otsu ? 1 : 0;
-
-  const variants = [];
-  variants.push({
-    name: 'otsu',
-    mask: otsuMask,
-    thresholdAt: () => otsu,
-    gray,
-  });
-  variants.push({
-    name: 'otsu+close',
-    mask: morphClose(otsuMask, width, height, 1),
-    thresholdAt: () => otsu,
-    gray,
-  });
-
-  const integral = integralImage(gray, width, height);
   const minSide = Math.min(width, height);
-  const configs = [
-    ['adaptive-1/8', Math.max(15, Math.floor(minSide / 8)), 0.15],
-    ['adaptive-1/16', Math.max(11, Math.floor(minSide / 16)), 0.10],
-    ['adaptive-1/4', Math.max(21, Math.floor(minSide / 4)), 0.20],
-  ];
-  for (const [name, window, offset] of configs) {
-    const { mask, threshold } = adaptiveMask(gray, width, height, integral, window, offset);
-    const thresholdAt = thresholdFunction(threshold, width, height);
-    variants.push({ name, mask, thresholdAt, gray });
-    variants.push({
-      name: `${name}+close`,
-      mask: morphClose(mask, width, height, 1),
-      thresholdAt,
-      gray,
-    });
-  }
+  const cache = new Map();
+  let gray = null;
+  let otsu = 0;
+  let grayMask = null;
+  let grayIntegral = null;
+  let value = null;
+  let sat = null;
+  let valueOtsu = 0;
+  let valueMask = null;
+  let valueIntegral = null;
 
-  // Value-channel variants: finder detection must ignore saturated data
-  // modules.  A neutral black pixel has low V and low saturation; a dark
-  // blue/red module has low luminance but high V or high saturation.  Using
-  // V plus a saturation filter keeps the finder ring isolated from the data.
-  const value = new Uint8Array(width * height);
-  const sat = new Float32Array(width * height);
-  for (let i = 0, p = 0; i < value.length; i++, p += 3) {
-    const r = image.data[p];
-    const g = image.data[p + 1];
-    const b = image.data[p + 2];
-    const mx = Math.max(r, g, b);
-    const mn = Math.min(r, g, b);
-    value[i] = mx;
-    sat[i] = mx === 0 ? 0 : (mx - mn) / mx;
-  }
-  const valueOtsu = robustThreshold(value).threshold;
-  const valueMask = new Uint8Array(width * height);
-  for (let i = 0; i < value.length; i++) {
-    valueMask[i] = value[i] < valueOtsu && (sat[i] < 0.5 || value[i] < 80) ? 1 : 0;
-  }
-  variants.push({
-    name: 'value-otsu',
-    mask: valueMask,
-    thresholdAt: () => valueOtsu,
-    channel: 'value',
-  });
-  variants.push({
-    name: 'value-otsu+close',
-    mask: morphClose(valueMask, width, height, 1),
-    thresholdAt: () => valueOtsu,
-    channel: 'value',
-  });
+  const ensureGray = () => {
+    if (gray) return gray;
+    gray = grayscale(image);
+    otsu = robustThreshold(gray).threshold;
+    return gray;
+  };
 
-  const valueIntegral = integralImage(value, width, height);
-  for (const [name, window, offset] of configs) {
-    const { mask, threshold } = adaptiveMask(value, width, height, valueIntegral, window, offset);
-    const filtered = new Uint8Array(mask.length);
-    for (let i = 0; i < mask.length; i++) filtered[i] = mask[i] && (sat[i] < 0.5 || value[i] < 80) ? 1 : 0;
-    const thresholdAt = thresholdFunction(threshold, width, height);
-    variants.push({ name: `value-${name}`, mask: filtered, thresholdAt, channel: 'value' });
-    variants.push({
-      name: `value-${name}+close`,
-      mask: morphClose(filtered, width, height, 1),
-      thresholdAt,
-      channel: 'value',
-    });
-  }
+  const ensureGrayMask = () => {
+    if (grayMask) return grayMask;
+    const src = ensureGray();
+    grayMask = new Uint8Array(src.length);
+    for (let i = 0; i < src.length; i++) grayMask[i] = src[i] < otsu ? 1 : 0;
+    return grayMask;
+  };
 
-  return variants;
+  const ensureGrayIntegral = () => {
+    if (!grayIntegral) grayIntegral = integralImage(ensureGray(), width, height);
+    return grayIntegral;
+  };
+
+  const ensureValue = () => {
+    if (value) return value;
+    value = new Uint8Array(width * height);
+    sat = new Float32Array(width * height);
+    for (let i = 0, p = 0; i < value.length; i++, p += 3) {
+      const r = image.data[p];
+      const g = image.data[p + 1];
+      const b = image.data[p + 2];
+      const mx = Math.max(r, g, b);
+      const mn = Math.min(r, g, b);
+      value[i] = mx;
+      sat[i] = mx === 0 ? 0 : (mx - mn) / mx;
+    }
+    valueOtsu = robustThreshold(value).threshold;
+    valueMask = new Uint8Array(value.length);
+    for (let i = 0; i < value.length; i++) {
+      valueMask[i] = value[i] < valueOtsu && (sat[i] < 0.5 || value[i] < 80) ? 1 : 0;
+    }
+    return value;
+  };
+
+  const ensureValueIntegral = () => {
+    if (!valueIntegral) valueIntegral = integralImage(ensureValue(), width, height);
+    return valueIntegral;
+  };
+
+  const build = (name) => {
+    if (name === 'otsu') {
+      return { name, mask: ensureGrayMask(), thresholdAt: () => otsu, gray: ensureGray() };
+    }
+    if (name === 'otsu+close') {
+      return {
+        name,
+        mask: morphClose(ensureGrayMask(), width, height, 1),
+        thresholdAt: () => otsu,
+        gray: ensureGray(),
+      };
+    }
+    if (name === 'value-otsu') {
+      ensureValue();
+      return { name, mask: valueMask, thresholdAt: () => valueOtsu, channel: 'value' };
+    }
+    if (name === 'value-otsu+close') {
+      ensureValue();
+      return {
+        name,
+        mask: morphClose(valueMask, width, height, 1),
+        thresholdAt: () => valueOtsu,
+        channel: 'value',
+      };
+    }
+    const adaptive = /^(value-)?adaptive-(1\/8|1\/16|1\/4)(\+close)?$/.exec(name);
+    if (!adaptive) return null;
+    const isValue = !!adaptive[1];
+    const kind = adaptive[2];
+    const close = !!adaptive[3];
+    const window = adaptiveWindow(kind, minSide);
+    const offset = ADAPTIVE_CONFIGS.find(([k]) => k === kind)[1];
+    const source = isValue ? ensureValue() : ensureGray();
+    const integral = isValue ? ensureValueIntegral() : ensureGrayIntegral();
+    const { mask, threshold } = adaptiveMask(source, width, height, integral, window, offset);
+    let finalMask = mask;
+    if (isValue) {
+      finalMask = new Uint8Array(mask.length);
+      for (let i = 0; i < mask.length; i++) {
+        finalMask[i] = mask[i] && (sat[i] < 0.5 || value[i] < 80) ? 1 : 0;
+      }
+    }
+    if (close) finalMask = morphClose(finalMask, width, height, 1);
+    return {
+      name,
+      mask: finalMask,
+      thresholdAt: thresholdFunction(threshold, width, height),
+      gray: isValue ? undefined : gray,
+      channel: isValue ? 'value' : undefined,
+    };
+  };
+
+  return {
+    image,
+    get(name) {
+      if (cache.has(name)) return cache.get(name);
+      const variant = build(name);
+      if (variant) cache.set(name, variant);
+      return variant;
+    },
+  };
+}
+
+export function preprocessVariants(image) {
+  const pre = createPreprocessor(image);
+  return PREPROCESS_NAMES.map((name) => pre.get(name));
 }
 
 export function localMeanFunction(gray, width, height, window) {

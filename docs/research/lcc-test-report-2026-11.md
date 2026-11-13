@@ -16,7 +16,7 @@
 | 可复现性 | 80+ 参数组合、跨进程、PNG/SVG：**字节级一致**；解码结果与 meta 也一致 |
 | 碰撞 | 同参数编码 2000 样本无重复；frame 含 payload + 系统 RS，编码映射在结构上单射；CRC32 可自然找到碰撞（非密码学校验），但不造成编码碰撞；随机损坏 **0 次静默错误** |
 | 部分损坏容忍 | 模块级损坏 100% 可解上限：G10 1.1–2.3%、G20 2.3–4.5%、C40/C33 2.3–4.7%（随 ECC）；12×12 连续遮挡（~5% 模块）仍可解；格式带 1–3 bit 单/双副本损坏全通过；QR 对比 0.1–1.0%；**0 次静默错误** |
-| 内存泄漏 | JS 路径与合法 wasm 路径**未发现泄漏**；但畸形 `lcc_api_stack` 输入**每次泄漏约 128 B**（100k 次 → 12.19 MiB） |
+| 内存泄漏 | 修复后 JS、合法 wasm 与畸形 `lcc_api_stack` 路径**均未发现泄漏**；100k 次截断输入 wasm 内存增长 0 B（修复前 12.19 MiB） |
 | Crash / 0day 风险 | S1–S7 **已修复并回归**：buffer 长度参数、`int64_t` 尺寸运算 + 32 MP 上限、cleanup、trap 后重建实例、PNG CRC/解压上限、JS 尺寸校验、编码参数校验。native hostile audit 与 wasm audit 现在均零告警/零增长 |
 | Fuzz（C/WASM 为主） | JS 侧 500–1000 次 × 8 类套件（含直接调用 C 导出的 `wasmraw`）：0 未处理异常、0 静默错误；原生 ASan/UBSan safe 400 次干净，hostile 50 次也无报告 |
 | Property-based | 30 个性质测试全部通过：往返、容量边界、确定性、可复现、碰撞、损坏、RS/BCH/frame/bitstream/format/rank/whitening |
@@ -30,7 +30,7 @@
 
 | 套件 | 命令 | 内容 |
 | --- | --- | --- |
-| 单元 + 新增测试 | `npm test` | 78 个测试，78 pass / 0 todo / 0 fail（约 18 s） |
+| 单元 + 新增测试 | `npm test` | 80 个测试，80 pass / 0 todo / 0 fail（约 18 s） |
 | Property-based | `npm run test:property` | 30 个性质测试（含可复现、碰撞、损坏、参数别名） |
 | Fuzz（C/WASM 为主） | `npm run test:fuzz -- --iterations 1000 --seed 7` | encode / decode / corrupt / png / ecc / wasm / wasmraw / stack |
 | 安全 / 内存 | `npm run test:security` | 泄漏、受限堆、PNG/尺寸边界、WASM trap 隔离 |
@@ -261,7 +261,7 @@ Fixtures：`G10/G20/C40` v8 @12 px，`C33` v8 @16 px，96 B 随机载荷，3 see
 
 ### 3.4 已验证的安全属性
 
-- 原 `npm test` 中的 8 个 TODO（6 个安全项 + 2 个相机项）已全部转为实际断言；当前 78 个测试全部通过、0 todo。
+- 原 `npm test` 中的 8 个 TODO（6 个安全项 + 2 个相机项）已全部转为实际断言；当前 80 个测试全部通过、0 todo。
 - 原生 ASan/UBSan **合法输入域** 400 次（含合法多帧 stack）：无报告；修复前 hostile 20 次即复现 `lcc_api_scan` 整数溢出，修复后 hostile 50 次无报告。
 - `wasmraw` fuzz 直接调用 C 导出（scan/stack/decode 的有效输入 + 像素/头部变异）75–150 次：未出现 trap；wasm 高水位内存随输入尺寸增长属正常，固定尺寸的 per-call 泄漏由 `audit:wasm` 单独度量。
 - 合法路径泄漏：JS 300 次重复解码 heap -0.13 MiB、wasm 0 B；受限 96 MB 堆下 120 次无 OOM。
@@ -282,7 +282,7 @@ Fixtures：`G10/G20/C40` v8 @12 px，`C33` v8 @16 px，96 B 随机载荷，3 see
 | S7 | `encode` 校验 width/height/quietZone/moduleSize/version/min/max/seed 为合法整数并限制渲染尺寸 | 负 quietZone、moduleSize 0、version 0、seed -1 均抛带字段名的 `Error` |
 | 旋转 | JS + C 检测器增加平行四边形假设（三 finder 中心 + `tr+bl-tl`），与 alignment/dark-corner 假设一起按 finder/timing 分数择优 | 相机基准 5°/10°/12°/15°/20° 全部 100%；`test/perf/camera.test.js` 覆盖 5–20° |
 
-最终回归：`npm test` 78/78 pass；原生 safe 400 次 + hostile 50 次 ASan/UBSan 干净；`audit:wasm` 0 泄漏/0 隔离失败；camera 26 条件除 C33 形状层的模糊/降采样外全部 100%。
+最终回归：`npm test` 80/80 pass；原生 safe 400 次 + hostile 50 次 ASan/UBSan 干净；`audit:wasm` 0 泄漏/0 隔离失败；camera 26 条件除 C33 形状层的模糊/降采样外全部 100%。
 
 ## 4. Fuzz 与 property-based test
 
@@ -428,10 +428,10 @@ QR 使用 `qrcode` 生成、`jsqr` 解码，ECC M；LCC 使用同等 1024 px 画
 
 ### 5.3 结论
 
-- **同尺寸、同黑白条件**：LCC G10 用略少的模块承载同样数据，PNG 体积几乎相同；编码慢约 2×，JS 解码慢约 10×——后者是当前最大的产品化阻碍，WASM 路径可把差距缩到 1–2×。
+- **同尺寸、同黑白条件**：LCC G10 用略少的模块承载同样数据，PNG 体积几乎相同；编码慢约 1.1–2.4×，JS 解码耗时为 QR 的 0.78–2.91×（短载荷更快，大载荷约 2–3× 慢）。
 - **允许彩色/受控条件**：LCC 的容量密度优势是数量级的（C40 4×，C55/C85 10×+），但需要更高模块尺寸、更好的拍摄/打印条件，PNG 体积也相应变大。
 - **扫描端**：QR 有成熟硬件/算法生态；LCC 的 JS 解码在惰性化后已与 jsQR 同量级（0.78–2.91×），WASM 在 C40 上更快。建议生产默认 WASM，JS 作为回退。
-- **鲁棒性对照**（详见 2.7 / 4.5）：偏色、光照、JPEG、透视、噪声下 LCC C/WASM 与 QR 基本持平或更好；**旋转 10–15° LCC 全失败而 QR 全通过**，是当前最大的场景差距；模块级损坏容忍 LCC 反而更高（1.1–4.7% vs QR 0.1–1.0%）。
+- **鲁棒性对照**（详见 2.7 / 4.5）：偏色、光照、JPEG、透视、噪声下 LCC C/WASM 与 QR 基本持平或更好；修复后旋转 5–20° LCC 全通过；模块级损坏容忍 LCC 反而更高（1.1–4.7% vs QR 0.1–1.0%）。
 
 ---
 
@@ -450,7 +450,7 @@ QR 使用 `qrcode` 生成、`jsqr` 解码，ECC M；LCC 使用同等 1024 px 画
 
 ### 6.2 强烈建议
 
-6. **覆盖引导 fuzz**：把 `native/fuzz_harness.c` 升级为 libFuzzer/AFL++ 目标（或接入 OSS-Fuzz），语料 = 合法 packed stack/scan + 编码图像 + 变异；跑 ASan/UBSan/MSan，并覆盖 wasm32 的 32 位 `size_t` 内存模型。当前随机 fuzz 20 次就能触发 `lcc_api_scan` 溢出，说明覆盖引导会很快发现更多边界。
+6. **覆盖引导 fuzz**：把 `native/fuzz_harness.c` 升级为 libFuzzer/AFL++ 目标（或接入 OSS-Fuzz），语料 = 合法 packed stack/scan + 编码图像 + 变异；跑 ASan/UBSan/MSan，并覆盖 wasm32 的 32 位 `size_t` 内存模型。修复前随机 fuzz 20 次即可触发 `lcc_api_scan` 溢出；修复后 hostile 50 次无报告，覆盖引导仍值得用于发现更深的边界。
 7. **跨平台可复现矩阵**：同一参数在 Node LTS × macOS/Linux/Windows、x64/arm64、C/WASM/原生后端上比对 SHA-256；编码格式冻结后建立 golden vectors（payload/params → 图像 hash），任何变化都必须显式升级格式版本。
 8. **碰撞与真实性**：编码映射在固定参数下结构单射，但 CRC32 只做错误检测。若码要用于凭证/支付/防伪，必须加 HMAC/签名；随机损坏的 2^-32 上界不能替代真实性。对“不同参数是否可能生成同一图像”保留 property test（当前 57 组无碰撞）。
 9. **损坏/erasure**：为 RS 增加 erasure 输入，利用多帧方差/检测器置信度把可纠能力提升到接近 2t；补充 finder/timing/alignment 遮挡曲线；明确“检测失败”和“纠错失败”的区分。

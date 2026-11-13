@@ -24,8 +24,8 @@ import { detectPerspective } from './detector.js';
 import { rsDecodeBlocks } from './ecc/rs.js';
 import { parseFrame } from './frame.js';
 import { readFormatBand } from './format/format-band.js';
-import { FINDER_PATTERN, sampleImage, sampleImageBilinear } from './image-utils.js';
-import { preprocessVariants } from './preprocess.js';
+import { FINDER_PATTERN, sampleImage, sampleImageBilinear, validateImage } from './image-utils.js';
+import { createPreprocessor } from './preprocess.js';
 import { buildIlluminationModel } from './illumination.js';
 import { localRankSymbols } from './local-rank.js';
 import { BLACK, WHITE, makeLayout } from './layout.js';
@@ -90,8 +90,9 @@ function finderScore(mask, width, height, center) {
 }
 
 export function detectSymbol(image, options = {}) {
+  validateImage(image);
   const { width, height } = image;
-  const variant = options.variant ?? preprocessVariants(image)[0];
+  const variant = options.variant ?? createPreprocessor(image).get('otsu');
   const { mask, thresholdAt } = variant;
   const threshold = thresholdAt(width / 2, height / 2);
   const rowC = finderCandidates(mask, width, height, true);
@@ -258,6 +259,7 @@ function makeExplicitDetector(image, options) {
 }
 
 export function decode(image, options = {}) {
+  validateImage(image);
   const mode = options.detector ?? 'axis';
   let det;
   if (options.sampler) {
@@ -489,9 +491,9 @@ export function decode(image, options = {}) {
 }
 
 export function decodeAuto(image, options = {}) {
+  validateImage(image);
   const detectorOption = options.detector === 'auto' ? undefined : options.detector;
-  const variants = preprocessVariants(image);
-  const byName = new Map(variants.map((v) => [v.name, v]));
+  const pre = createPreprocessor(image);
   const sequence = [];
   if (!detectorOption || detectorOption === 'axis') {
     sequence.push(['value-otsu', 'axis'], ['value-otsu+close', 'axis'], ['otsu', 'axis'], ['otsu+close', 'axis']);
@@ -517,7 +519,7 @@ export function decodeAuto(image, options = {}) {
   const errors = [];
   let lastMeta = null;
   for (const [name, detector] of sequence) {
-    const variant = byName.get(name);
+    const variant = pre.get(name);
     if (!variant) continue;
     try {
       return decode(image, { ...options, detector, variant });

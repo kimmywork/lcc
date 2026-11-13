@@ -169,6 +169,7 @@ test('invalid options fail with a descriptive Error', () => {
     [() => encode('x', { layer: 'G10', version: 0 }), /version/],
     [() => encode('x', { layer: 'G10', quietZone: -1 }), /quietZone/],
     [() => encode('x', { layer: 'G10', moduleSize: 0 }), /moduleSize/],
+    [() => encode('x', { layer: 'G20', version: 20, moduleSize: 64, quietZone: 4, width: 8192, height: 8192 }), /pixel budget/],
   ];
   for (const [fn, pattern] of cases) {
     assert.throws(fn, pattern);

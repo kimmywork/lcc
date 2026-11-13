@@ -166,13 +166,16 @@ test('random corruption never produces a different valid payload', () => {
         const pos = int(rng, 0, data.length - 1);
         data[pos] ^= 1 + int(rng, 0, 254);
       }
+      let decoded = null;
       try {
-        const decoded = decodeAuto({ width: encoded.image.width, height: encoded.image.height, data }, { detector: 'axis' });
-        assert.equal(Buffer.from(decoded.payload).toString('hex'), Buffer.from(payload).toString('hex'));
-        decodedOk++;
+        decoded = decodeAuto({ width: encoded.image.width, height: encoded.image.height, data }, { detector: 'axis' });
       } catch (err) {
         assert.ok(err instanceof Error);
         rejected++;
+      }
+      if (decoded) {
+        assert.equal(Buffer.from(decoded.payload).toString('hex'), Buffer.from(payload).toString('hex'));
+        decodedOk++;
       }
     }
   }

@@ -134,6 +134,8 @@ void lcc_release(void *p);
 int lcc_image_geometry(int width, int height, size_t *bytes);
 /* Returns 1 when N is a supported symbol size (21 + 4*(v-1), v in 1..100). */
 int lcc_valid_symbol_size(int N);
+/* Reject homographies whose projected corners are nonfinite/out of sampler range. */
+int lcc_homography_safe(const double H[9], int N);
 
 int lcc_api_stack(const uint8_t *input, int input_len);
 int lcc_api_decode(const uint8_t *rgb, size_t rgb_len, int width, int height, int mode);
