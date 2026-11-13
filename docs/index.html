@@ -229,6 +229,21 @@
     </p>
   </footer>
 
+  <script>
+    window.addEventListener('error', (event) => {
+      const el = document.getElementById('scanStatus');
+      if (!el) return;
+      el.textContent = `页面脚本加载失败：${event.message || event.error?.message || 'unknown error'} · protocol=${location.protocol} · wasm=${typeof WebAssembly !== 'undefined'}`;
+      el.className = 'status err';
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      const el = document.getElementById('scanStatus');
+      if (!el) return;
+      const reason = event.reason?.message || String(event.reason || 'unknown rejection');
+      el.textContent = `页面初始化失败：${reason} · protocol=${location.protocol} · wasm=${typeof WebAssembly !== 'undefined'}`;
+      el.className = 'status err';
+    });
+  </script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

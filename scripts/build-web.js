@@ -27,7 +27,12 @@ const skip = new Set([
   'ecc',
   'format',
 ]);
-const keepNames = ['lcc-decoder.wasm', 'lcc-encoder.wasm'];
+const keepNames = [
+  'lcc-decoder.wasm',
+  'lcc-decoder-baseline.wasm',
+  'lcc-encoder.wasm',
+  'lcc-encoder-baseline.wasm',
+];
 const kept = new Map();
 for (const name of keepNames) {
   const file = path.join(out, name);

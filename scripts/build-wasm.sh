@@ -1,7 +1,9 @@
 #!/bin/sh
-# Build the two LCC wasm artifacts:
-#   docs/lib/lcc-decoder.wasm  scan / stack / decode core
-#   docs/lib/lcc-encoder.wasm  frame / ECC / layout / render core
+# Build the two LCC wasm artifacts, each in a SIMD and a baseline variant:
+#   docs/lib/lcc-decoder.wasm           SIMD
+#   docs/lib/lcc-decoder-baseline.wasm  no SIMD (older mobile browsers)
+#   docs/lib/lcc-encoder.wasm           SIMD
+#   docs/lib/lcc-encoder-baseline.wasm  no SIMD
 # Uses Emscripten when emcc is available, otherwise zig's wasm32-wasi target.
 set -e
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -64,6 +66,7 @@ build_target() {
   name=$1
   sources=$2
   exports=$3
+  simd=$4
   if command -v emcc >/dev/null 2>&1 || [ -x "$HOME/emsdk/upstream/emscripten/emcc" ]; then
     if ! command -v emcc >/dev/null 2>&1 && [ -f "$HOME/emsdk/emsdk_env.sh" ]; then
       # shellcheck disable=SC1091
@@ -71,10 +74,12 @@ build_target() {
     fi
     # shellcheck disable=SC2086
     export EM_CACHE="${EM_CACHE:-$ROOT/.em-cache}"
+    SIMD_FLAGS=""
+    [ "$simd" = "1" ] && SIMD_FLAGS="-msimd128"
     # shellcheck disable=SC2086
     emcc $sources \
       -O3 \
-      -msimd128 \
+      $SIMD_FLAGS \
       -Inative \
       -s STANDALONE_WASM=1 \
       -s PURE_WASI=1 \
@@ -85,8 +90,10 @@ build_target() {
   else
     export ZIG_GLOBAL_CACHE_DIR="${ZIG_GLOBAL_CACHE_DIR:-$ROOT/.zig-cache}"
     export ZIG_LOCAL_CACHE_DIR="${ZIG_LOCAL_CACHE_DIR:-$ROOT/.zig-cache}"
+    CPU="generic"
+    [ "$simd" = "1" ] && CPU="generic+simd128"
     # shellcheck disable=SC2086
-    zig cc -target wasm32-wasi -mcpu=generic+simd128 -O3 -Inative $sources \
+    zig cc -target wasm32-wasi -mcpu="$CPU" -O3 -Inative $sources \
       -mexec-model=reactor \
       -o "docs/lib/$name" \
       -Wl,--no-entry \
@@ -95,5 +102,7 @@ build_target() {
 }
 
 mkdir -p docs/lib
-build_target lcc-decoder.wasm "$DECODER_SOURCES" "$DECODER_EXPORTS"
-build_target lcc-encoder.wasm "$ENCODER_SOURCES" "$ENCODER_EXPORTS"
+build_target lcc-decoder.wasm "$DECODER_SOURCES" "$DECODER_EXPORTS" 1
+build_target lcc-decoder-baseline.wasm "$DECODER_SOURCES" "$DECODER_EXPORTS" 0
+build_target lcc-encoder.wasm "$ENCODER_SOURCES" "$ENCODER_EXPORTS" 1
+build_target lcc-encoder-baseline.wasm "$ENCODER_SOURCES" "$ENCODER_EXPORTS" 0

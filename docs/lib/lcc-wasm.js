@@ -6,16 +6,25 @@
  * during module evaluation (top-level await).
  */
 
-import { instantiateWasmBytes, loadWasmBytes } from './wasm-common.js';
+import {
+  compileWasmAsync,
+  compileWasmBytes,
+  instantiateWasmModule,
+  isNode,
+  loadWasmBytes,
+  wasmSimdSupported,
+} from './wasm-common.js';
 
-const wasmBytes = await loadWasmBytes('lcc-decoder.wasm');
-let wasm = instantiateWasmBytes(wasmBytes);
+const wasmFile = wasmSimdSupported() ? 'lcc-decoder.wasm' : 'lcc-decoder-baseline.wasm';
+const wasmBytes = await loadWasmBytes(wasmFile);
+const wasmModule = isNode ? compileWasmBytes(wasmBytes) : await compileWasmAsync(wasmBytes);
+let wasm = instantiateWasmModule(wasmModule);
 
 let forcedTrap = false;
 
 /** Drop the cached instance (a wasm trap can leave allocator state unusable). */
 export function resetWasmInstance() {
-  wasm = instantiateWasmBytes(wasmBytes);
+  wasm = instantiateWasmModule(wasmModule);
 }
 
 /** Test-only hook: make the next protected wasm call throw a RuntimeError. */
@@ -26,7 +35,7 @@ export function forceNextWasmTrap() {
 function trapSafe(fn) {
   if (forcedTrap) {
     forcedTrap = false;
-    wasm = instantiateWasmBytes(wasmBytes);
+    wasm = instantiateWasmModule(wasmModule);
     const err = new Error('forced wasm trap');
     err.name = 'RuntimeError';
     throw err;
@@ -34,7 +43,7 @@ function trapSafe(fn) {
   try {
     return fn();
   } catch (err) {
-    if (err && err.name === 'RuntimeError') wasm = instantiateWasmBytes(wasmBytes);
+    if (err && err.name === 'RuntimeError') wasm = instantiateWasmModule(wasmModule);
     throw err;
   }
 }
