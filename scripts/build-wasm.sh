@@ -65,6 +65,10 @@ build_target() {
   sources=$2
   exports=$3
   if command -v emcc >/dev/null 2>&1 || [ -x "$HOME/emsdk/upstream/emscripten/emcc" ]; then
+    if ! command -v emcc >/dev/null 2>&1 && [ -f "$HOME/emsdk/emsdk_env.sh" ]; then
+      # shellcheck disable=SC1091
+      . "$HOME/emsdk/emsdk_env.sh"
+    fi
     # shellcheck disable=SC2086
     export EM_CACHE="${EM_CACHE:-$ROOT/.em-cache}"
     # shellcheck disable=SC2086

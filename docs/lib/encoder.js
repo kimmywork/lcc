@@ -101,17 +101,16 @@ export function chooseVersionAndScale(args) {
     harmony: args.harmony,
     constraint: args.constraint,
   });
+  const cap = capacityForWasm(
+    result.layout,
+    canonicalLayer(args.layerName),
+    result.meta.constraint,
+    result.meta.ecc,
+  );
   return {
     version: result.meta.version,
     layout: result.layout,
-    cap: {
-      D: result.meta.dataCount,
-      capacityBits: result.meta.capacityBits,
-      S: result.meta.rsSymbols,
-      kTotal: result.meta.rsSymbols,
-      payloadCapacity: result.meta.payloadCapacity,
-      ecc: result.meta.ecc,
-    },
+    cap,
     moduleSize: result.meta.moduleSize,
     ecc: result.meta.ecc,
   };
