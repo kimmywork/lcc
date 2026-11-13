@@ -5,7 +5,7 @@ import { performance } from 'node:perf_hooks';
 import { decodeAuto, encode, stackCanonicalFrames } from '../../src/index.js';
 import { decodePNG, encodePNG } from '../../src/png.js';
 import { crc32 } from '../../src/ecc/crc32.js';
-import { debugResidualsForcedWasm, decodeAutoWasm, stackCanonicalFramesWasm } from '../../docs/lib/lcc-wasm.js';
+import { debugResidualsForcedWasm, decodeAutoWasm, stackCanonicalFramesWasm } from '../../src/lcc-wasm.js';
 import { bytes, int, mulberry32 } from '../../scripts/lib/rng.mjs';
 
 function mutatePNG(png, mutate, { fixCrc = false } = {}) {
@@ -75,11 +75,11 @@ test('C core traps are contained by the loader (process survives malformed buffe
   assert.equal(baseline.text, 'wasm boundary');
 
   await assert.rejects(
-    decodeAutoWasm({ width: 65536, height: 65536, data: new Uint8Array(64) }, { detector: 'axis' }),
+    async () => decodeAutoWasm({ width: 65536, height: 65536, data: new Uint8Array(64) }, { detector: 'axis' }),
     Error,
   );
   await assert.rejects(
-    stackCanonicalFramesWasm(
+    async () => stackCanonicalFramesWasm(
       [encoded.image, encoded.image],
       [{ ...det, N: 4096 }, { ...det, N: 4096 }],
       { moduleSize: 16, quietZone: 0, maxDimension: 2147483647 },
@@ -90,11 +90,11 @@ test('C core traps are contained by the loader (process survives malformed buffe
 
 test('C API rejects mismatched buffer lengths without a trap', async () => {
   await assert.rejects(
-    decodeAutoWasm({ width: 1024, height: 1024, data: new Uint8Array(64) }, { detector: 'axis' }),
+    async () => decodeAutoWasm({ width: 1024, height: 1024, data: new Uint8Array(64) }, { detector: 'axis' }),
     (err) => err instanceof Error && err.name !== 'RuntimeError' && /decode failed/.test(err.message),
   );
   await assert.rejects(
-    decodeAutoWasm({ width: 65536, height: 65536, data: new Uint8Array(64) }, { detector: 'axis' }),
+    async () => decodeAutoWasm({ width: 65536, height: 65536, data: new Uint8Array(64) }, { detector: 'axis' }),
     (err) => err instanceof Error && err.name !== 'RuntimeError' && /decode failed/.test(err.message),
   );
 });
@@ -108,7 +108,7 @@ test('forced-debug and stack homographies reject unsafe projections', async () =
   assert.equal(debug.status, 2);
   const huge = [1e12, 0, 1e12, 0, 1e12, 1e12, 0, 0, 1e-3];
   await assert.rejects(
-    stackCanonicalFramesWasm(
+    async () => stackCanonicalFramesWasm(
       [encoded.image, encoded.image],
       [
         { version: 2, N: 25, s: 24, score: 1, has_h: true, homography: huge },
@@ -126,7 +126,7 @@ test('C stack parser rejects overflowing N/module combinations without a trap', 
   });
   const det = { version: 2, N: 4096, s: 16, score: 1 };
   await assert.rejects(
-    stackCanonicalFramesWasm([encoded.image, encoded.image], [det, det], {
+    async () => stackCanonicalFramesWasm([encoded.image, encoded.image], [det, det], {
       moduleSize: 16, quietZone: 0, maxDimension: 2147483647,
     }),
     (err) => err instanceof Error && err.name !== 'RuntimeError' && /stack failed/.test(err.message),
@@ -138,7 +138,7 @@ test('wasm instance stays usable after a rejected malformed input', async () => 
     layer: 'C40', version: 2, moduleSize: 24, width: 512, height: 512, mode: 'fill', constraint: false,
   });
   await assert.rejects(
-    decodeAutoWasm({ width: 1024, height: 1024, data: new Uint8Array(64) }, { detector: 'axis' }),
+    async () => decodeAutoWasm({ width: 1024, height: 1024, data: new Uint8Array(64) }, { detector: 'axis' }),
     Error,
   );
   const decoded = await decodeAutoWasm(encoded.image, { detector: 'axis' });

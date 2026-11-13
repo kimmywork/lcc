@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 
 import { decodeAuto, encode } from '../../src/index.js';
-import { decodeAutoWasm } from '../../docs/lib/lcc-wasm.js';
+import { decodeAutoWasm } from '../../src/lcc-wasm.js';
 import { quantile } from '../../scripts/lib/stats.mjs';
 
 /**

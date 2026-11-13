@@ -22,7 +22,7 @@ import os from 'node:os';
 
 import jsQR from 'jsqr';
 import { encode } from '../src/index.js';
-import { decodeAutoWasm } from '../docs/lib/lcc-wasm.js';
+import { decodeAutoWasm } from '../src/lcc-wasm.js';
 import { DEGRADATIONS, degrade } from './lib/degrade.mjs';
 import { rasterizeQR, toRGBA } from './lib/qr-image.mjs';
 import { mulberry32 } from './lib/rng.mjs';

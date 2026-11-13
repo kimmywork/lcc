@@ -24,7 +24,7 @@ import os from 'node:os';
 import QRCode from 'qrcode';
 import jsQR from 'jsqr';
 import { encode } from '../src/index.js';
-import { decodeAutoWasm } from '../docs/lib/lcc-wasm.js';
+import { decodeAutoWasm } from '../src/lcc-wasm.js';
 import { computeRSBlocks } from '../src/ecc/rs.js';
 import { mulberry32 } from './lib/rng.mjs';
 import { fmt, table } from './lib/stats.mjs';

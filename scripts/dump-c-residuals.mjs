@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { encode } from '../src/encoder.js';
-import { debugResidualsWasm, debugResidualsForcedWasm } from '../docs/lib/lcc-wasm.js';
+import { debugResidualsWasm, debugResidualsForcedWasm } from '../src/lcc-wasm.js';
 
 function parseArgs(argv) {
   const out = { manifest: 'training/corpus/blur_shape/manifest.json', out: 'training/corpus/c_residuals', detector: 'axis', onlyOk: true };

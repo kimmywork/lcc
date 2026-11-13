@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { LAYERS, decodeAuto, encode } from '../../src/index.js';
 import { decodePNG, encodePNG } from '../../src/png.js';
-import { decodeAutoWasm } from '../../docs/lib/lcc-wasm.js';
+import { decodeAutoWasm } from '../../src/lcc-wasm.js';
 import { bytes, gaussian, int, mulberry32, pick } from '../../scripts/lib/rng.mjs';
 
 /**
@@ -115,11 +115,11 @@ test('random encoder options succeed with a valid image or throw a descriptive E
 
 test('C core rejects hostile buffers without killing the process', async () => {
   await assert.rejects(
-    decodeAutoWasm({ width: 65536, height: 65536, data: new Uint8Array(64) }, { detector: 'axis' }),
+    async () => decodeAutoWasm({ width: 65536, height: 65536, data: new Uint8Array(64) }, { detector: 'axis' }),
     Error,
   );
   await assert.rejects(
-    decodeAutoWasm({ width: -1, height: 64, data: new Uint8Array(192) }, { detector: 'axis' }),
+    async () => decodeAutoWasm({ width: -1, height: 64, data: new Uint8Array(192) }, { detector: 'axis' }),
     Error,
   );
 });

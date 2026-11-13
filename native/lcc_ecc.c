@@ -84,6 +84,16 @@ static int bch15_encode(int message) {
   return ((msg << 10) | (val & 0x3ff)) & 0x7fff;
 }
 
+int lcc_bch15_encode(int message) {
+  const int gen = 0x537;
+  const int msg = message & 0x1f;
+  int val = msg << 10;
+  for (int i = 14; i >= 10; i--) {
+    if ((val >> i) & 1) val ^= gen << (i - 10);
+  }
+  return ((msg << 10) | (val & 0x3ff)) & 0x7fff;
+}
+
 int lcc_bch15_decode(int word) {
   const int w = word & 0x7fff;
   int best = -1;
@@ -288,15 +298,151 @@ static int rs_decode_one(const uint8_t *received, int n, int nsym, uint8_t *data
   return 1;
 }
 
+static void rs_generator(int nsym, uint8_t *gen, int *gen_len) {
+  int len = 1;
+  memset(gen, 0, 257);
+  gen[0] = 1;
+  for (int i = 0; i < nsym; i++) {
+    const int alpha = lcc_gf_pow(2, i);
+    /* Multiply the current polynomial by (1 + alpha*x), ascending order. */
+    for (int j = len; j >= 1; j--) {
+      gen[j] = (uint8_t)(gen[j] ^ lcc_gf_mul(gen[j - 1], alpha));
+    }
+    len++;
+  }
+  *gen_len = len;
+}
+
+static void rs_encode_one(const uint8_t *data, int k, int nsym, uint8_t *out) {
+  uint8_t gen[257];
+  int gen_len = 0;
+  rs_generator(nsym, gen, &gen_len);
+  uint8_t work[512];
+  memset(work, 0, sizeof(work));
+  memcpy(work, data, (size_t)k);
+  for (int i = 0; i < k; i++) {
+    const int coef = work[i];
+    if (coef == 0) continue;
+    for (int j = 1; j < gen_len; j++) {
+      work[i + j] ^= (uint8_t)lcc_gf_mul(gen[j], coef);
+    }
+  }
+  memcpy(out, data, (size_t)k);
+  memcpy(out + k, work + k, (size_t)nsym);
+}
+
+int lcc_rs_encode_blocks(
+  const uint8_t *data,
+  int data_len,
+  int total,
+  double redundancy,
+  uint8_t **out,
+  int *out_len
+) {
+  if (!data || data_len < 0 || total <= 0) return 0;
+  const int blocks = total > 255 ? (total + 254) / 255 : 1;
+  if (blocks > 4096) return 0;
+  const int base = total / blocks;
+  const int rem = total % blocks;
+  int *ns = lcc_alloc((size_t)blocks * sizeof(int));
+  int *ks = lcc_alloc((size_t)blocks * sizeof(int));
+  int *ps = lcc_alloc((size_t)blocks * sizeof(int));
+  uint8_t **encoded = lcc_alloc((size_t)blocks * sizeof(uint8_t *));
+  int k_total = 0;
+  int max_n = 0;
+  if (!ns || !ks || !ps || !encoded) {
+    lcc_release(ns);
+    lcc_release(ks);
+    lcc_release(ps);
+    lcc_release(encoded);
+    return 0;
+  }
+  memset(encoded, 0, (size_t)blocks * sizeof(uint8_t *));
+  for (int i = 0; i < blocks; i++) {
+    const int n = base + (i < rem ? 1 : 0);
+    int parity = (int)lcc_js_round(n * redundancy);
+    if (parity < 1) parity = 1;
+    if (parity > n - 1) parity = n - 1;
+    ns[i] = n;
+    ps[i] = parity;
+    ks[i] = n - parity;
+    k_total += ks[i];
+    if (n > max_n) max_n = n;
+  }
+  if (data_len > k_total) {
+    lcc_release(ns);
+    lcc_release(ks);
+    lcc_release(ps);
+    lcc_release(encoded);
+    return 0;
+  }
+
+  uint8_t *padded = lcc_alloc((size_t)k_total);
+  uint8_t *interleaved = lcc_alloc((size_t)total);
+  if (!padded || !interleaved) {
+    lcc_release(ns);
+    lcc_release(ks);
+    lcc_release(ps);
+    lcc_release(encoded);
+    lcc_release(padded);
+    lcc_release(interleaved);
+    return 0;
+  }
+  memset(padded, 0, (size_t)k_total);
+  memcpy(padded, data, (size_t)data_len);
+
+  int offset = 0;
+  int ok = 1;
+  for (int i = 0; i < blocks; i++) {
+    encoded[i] = lcc_alloc((size_t)ns[i]);
+    if (!encoded[i]) {
+      ok = 0;
+      break;
+    }
+    rs_encode_one(padded + offset, ks[i], ps[i], encoded[i]);
+    offset += ks[i];
+  }
+  if (ok) {
+    int p = 0;
+    for (int col = 0; col < max_n; col++) {
+      for (int i = 0; i < blocks; i++) {
+        if (col < ns[i]) interleaved[p++] = encoded[i][col];
+      }
+    }
+  }
+  for (int i = 0; i < blocks; i++) lcc_release(encoded[i]);
+  lcc_release(padded);
+  lcc_release(ns);
+  lcc_release(ks);
+  lcc_release(ps);
+  lcc_release(encoded);
+  if (!ok) {
+    lcc_release(interleaved);
+    return 0;
+  }
+  *out = interleaved;
+  *out_len = total;
+  return 1;
+}
+
 int lcc_rs_decode_blocks(const uint8_t *received, int len, double redundancy, uint8_t **out, int *out_len, int *corrected) {
   if (len <= 0) return 0;
   const int blocks = len > 255 ? (len + 254) / 255 : 1;
+  if (blocks > 4096) return 0;
   const int base = len / blocks;
   const int rem = len % blocks;
-  int ns[64];
-  int ks[64];
-  int ps[64];
-  if (blocks > 64) return 0;
+  int *ns = lcc_alloc((size_t)blocks * sizeof(int));
+  int *ks = lcc_alloc((size_t)blocks * sizeof(int));
+  int *ps = lcc_alloc((size_t)blocks * sizeof(int));
+  uint8_t **data = lcc_alloc((size_t)blocks * sizeof(uint8_t *));
+  if (!ns || !ks || !ps || !data) {
+    lcc_release(ns);
+    lcc_release(ks);
+    lcc_release(ps);
+    lcc_release(data);
+    return 0;
+  }
+  memset(data, 0, (size_t)blocks * sizeof(uint8_t *));
   int max_n = 0;
   int k_total = 0;
   for (int i = 0; i < blocks; i++) {
@@ -310,11 +456,16 @@ int lcc_rs_decode_blocks(const uint8_t *received, int len, double redundancy, ui
     k_total += ks[i];
     if (n > max_n) max_n = n;
   }
-  uint8_t *data[64];
-  memset(data, 0, sizeof(data));
   for (int i = 0; i < blocks; i++) {
     data[i] = lcc_alloc((size_t)ns[i]);
-    if (!data[i]) return 0;
+    if (!data[i]) {
+      for (int j = 0; j < blocks; j++) lcc_release(data[j]);
+      lcc_release(ns);
+      lcc_release(ks);
+      lcc_release(ps);
+      lcc_release(data);
+      return 0;
+    }
   }
   int p = 0;
   for (int col = 0; col < max_n; col++) {
@@ -323,7 +474,14 @@ int lcc_rs_decode_blocks(const uint8_t *received, int len, double redundancy, ui
     }
   }
   uint8_t *merged = lcc_alloc((size_t)k_total);
-  if (!merged) return 0;
+  if (!merged) {
+    for (int j = 0; j < blocks; j++) lcc_release(data[j]);
+    lcc_release(ns);
+    lcc_release(ks);
+    lcc_release(ps);
+    lcc_release(data);
+    return 0;
+  }
   int offset = 0;
   int corr = 0;
   for (int i = 0; i < blocks; i++) {
@@ -331,12 +489,20 @@ int lcc_rs_decode_blocks(const uint8_t *received, int len, double redundancy, ui
     if (!rs_decode_one(data[i], ns[i], ps[i], merged + offset, &c)) {
       for (int j = 0; j < blocks; j++) lcc_release(data[j]);
       lcc_release(merged);
+      lcc_release(ns);
+      lcc_release(ks);
+      lcc_release(ps);
+      lcc_release(data);
       return 0;
     }
     corr += c;
     offset += ks[i];
   }
   for (int i = 0; i < blocks; i++) lcc_release(data[i]);
+  lcc_release(ns);
+  lcc_release(ks);
+  lcc_release(ps);
+  lcc_release(data);
   *out = merged;
   *out_len = k_total;
   *corrected = corr;

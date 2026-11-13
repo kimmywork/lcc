@@ -10,7 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { decodeAutoWasm, scanFramesWasm } from '../docs/lib/lcc-wasm.js';
+import { decodeAutoWasm, scanFramesWasm } from '../src/lcc-wasm.js';
 
 function parseArgs(argv) {
   const out = {

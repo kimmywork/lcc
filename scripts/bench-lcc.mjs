@@ -29,7 +29,7 @@ import {
   makeLayout,
 } from '../src/index.js';
 import { preprocessVariants } from '../src/preprocess.js';
-import { decodeAutoWasm, wasmMemoryStats } from '../docs/lib/lcc-wasm.js';
+import { decodeAutoWasm, wasmMemoryStats } from '../src/lcc-wasm.js';
 import { mulberry32 } from './lib/rng.mjs';
 import { batchMeans, fmt, fmtBytes, summarize, table } from './lib/stats.mjs';
 import { positiveInt } from './lib/args.mjs';

@@ -1,16 +1,22 @@
 /**
- * Small loader for the C scan core in lcc.wasm.
- * The module is wasm32-wasi and only needs a handful of preview1 calls.
+ * Loader for the C decode core in lcc-decoder.wasm.
+ *
+ * Node instantiates synchronously during module evaluation, so these
+ * functions stay synchronous.  Browsers fetch the artifact asynchronously
+ * during module evaluation (top-level await).
  */
 
-let instancePromise = null;
+import { instantiateWasmBytes, loadWasmBytes } from './wasm-common.js';
+
+const wasmBytes = await loadWasmBytes('lcc-decoder.wasm');
+let wasm = instantiateWasmBytes(wasmBytes);
+
+let forcedTrap = false;
 
 /** Drop the cached instance (a wasm trap can leave allocator state unusable). */
 export function resetWasmInstance() {
-  instancePromise = null;
+  wasm = instantiateWasmBytes(wasmBytes);
 }
-
-let forcedTrap = false;
 
 /** Test-only hook: make the next protected wasm call throw a RuntimeError. */
 export function forceNextWasmTrap() {
@@ -20,7 +26,7 @@ export function forceNextWasmTrap() {
 function trapSafe(fn) {
   if (forcedTrap) {
     forcedTrap = false;
-    instancePromise = null;
+    wasm = instantiateWasmBytes(wasmBytes);
     const err = new Error('forced wasm trap');
     err.name = 'RuntimeError';
     throw err;
@@ -28,111 +34,17 @@ function trapSafe(fn) {
   try {
     return fn();
   } catch (err) {
-    if (err && err.name === 'RuntimeError') instancePromise = null;
+    if (err && err.name === 'RuntimeError') wasm = instantiateWasmBytes(wasmBytes);
     throw err;
   }
 }
 
-function wasiImports() {
-  let memory = null;
-  const view = () => new DataView(memory.buffer);
-  const base = {
-    args_sizes_get(argcPtr, argvBufSizePtr) {
-      view().setUint32(argcPtr, 0, true);
-      view().setUint32(argvBufSizePtr, 0, true);
-      return 0;
-    },
-    args_get() {
-      return 0;
-    },
-    environ_sizes_get(countPtr, sizePtr) {
-      view().setUint32(countPtr, 0, true);
-      view().setUint32(sizePtr, 0, true);
-      return 0;
-    },
-    environ_get() {
-      return 0;
-    },
-    fd_close() {
-      return 0;
-    },
-    fd_seek() {
-      return 0;
-    },
-    fd_write() {
-      return 0;
-    },
-    fd_fdstat_get() {
-      return 0;
-    },
-    fd_prestat_get() {
-      return 8;
-    },
-    fd_prestat_dir_name() {
-      return 0;
-    },
-    clock_time_get(id, precision, timePtr) {
-      view().setBigUint64(timePtr, BigInt(Date.now()) * 1000000n, true);
-      return 0;
-    },
-    proc_exit(code) {
-      throw new Error(`LCC wasm exited ${code}`);
-    },
-    random_get(ptr, len) {
-      const bytes = new Uint8Array(memory.buffer, ptr, len);
-      if (globalThis.crypto?.getRandomValues) crypto.getRandomValues(bytes);
-      else bytes.fill(1);
-      return 0;
-    },
-  };
-  return {
-    wasi_snapshot_preview1: new Proxy(base, {
-      get(target, prop) {
-        if (prop in target) return target[prop];
-        return () => 0;
-      },
-    }),
-    bind(exportedMemory) {
-      memory = exportedMemory;
-    },
-  };
+function writeBytes(bytes) {
+  return wasm.write(bytes);
 }
 
-async function loadInstance() {
-  if (!instancePromise) {
-    instancePromise = (async () => {
-      const imports = wasiImports();
-      let bytes;
-      if (typeof process !== 'undefined' && process.versions?.node) {
-        const { readFile } = await import('node:fs/promises');
-        bytes = await readFile(new URL('./lcc.wasm', import.meta.url));
-      } else {
-        const response = await fetch(new URL('./lcc.wasm', import.meta.url));
-        if (!response.ok) throw new Error(`LCC wasm fetch failed: ${response.status}`);
-        bytes = await response.arrayBuffer();
-      }
-      const { instance } = await WebAssembly.instantiate(bytes, {
-        wasi_snapshot_preview1: imports.wasi_snapshot_preview1,
-      });
-      imports.bind(instance.exports.memory);
-      return instance.exports;
-    })();
-  }
-  return instancePromise;
-}
-
-function writeBytes(exports, bytes) {
-  const ptr = exports.malloc(bytes.length);
-  if (!ptr) throw new Error('LCC wasm: out of memory');
-  new Uint8Array(exports.memory.buffer).set(bytes, ptr);
-  return ptr;
-}
-
-function readLast(exports) {
-  const ptr = exports.lcc_last();
-  const len = exports.lcc_last_len();
-  if (!ptr || len <= 0) throw new Error('LCC wasm: empty result');
-  return new Uint8Array(exports.memory.buffer).slice(ptr, ptr + len);
+function readLast() {
+  return wasm.readLast();
 }
 
 const CALIBRATION = ['threshold', 'gray-map', 'identity-clean', 'affine', 'identity'];
@@ -184,6 +96,10 @@ function packStack(frames, detections, options) {
     f64(valid ? det.originY ?? 0 : 0);
     f64(valid ? det.s ?? 0 : 0);
   }
+  return concat(chunks);
+}
+
+function concat(chunks) {
   const total = chunks.reduce((sum, part) => sum + part.length, 0);
   const out = new Uint8Array(total);
   let offset = 0;
@@ -245,7 +161,7 @@ function parseDecode(bytes) {
       harmony: view.getInt32(48, true) === 1,
       seed: view.getInt32(52, true),
       shapeSetSize: shapeSet,
-      shapeBits: shapeSet > 1 ? 3 : 0,
+      shapeBits: shapeSet > 1 ? Math.log2(shapeSet) : 0,
       bitsPerModule: view.getFloat64(60, true),
       formatBlocks: view.getInt32(68, true),
       dataCount: view.getInt32(72, true),
@@ -258,27 +174,98 @@ function parseDecode(bytes) {
   };
 }
 
-export async function stackCanonicalFramesWasm(frames, detections, options = {}) {
-  const wasm = await loadInstance();
+export function stackCanonicalFramesWasm(frames, detections, options = {}) {
   const packed = packStack(frames, detections, options);
-  const ptr = writeBytes(wasm, packed);
+  const ptr = writeBytes(packed);
   try {
-    trapSafe(() => wasm.lcc_api_stack(ptr, packed.length));
-    return parseStack(readLast(wasm));
+    trapSafe(() => wasm.exports.lcc_api_stack(ptr, packed.length));
+    return parseStack(readLast());
   } finally {
-    wasm.free(ptr);
+    wasm.exports.free(ptr);
   }
 }
 
-export async function decodeAutoWasm(image, options = {}) {
-  const wasm = await loadInstance();
+export function decodeAutoWasm(image, options = {}) {
   const mode = options.detector === 'axis' ? 1 : options.detector === 'perspective' ? 2 : 0;
-  const ptr = writeBytes(wasm, image.data);
+  const ptr = writeBytes(image.data);
   try {
-    trapSafe(() => wasm.lcc_api_decode(ptr, image.data.length, image.width, image.height, mode));
-    return parseDecode(readLast(wasm));
+    trapSafe(() => wasm.exports.lcc_api_decode(ptr, image.data.length, image.width, image.height, mode));
+    return parseDecode(readLast());
   } finally {
-    wasm.free(ptr);
+    wasm.exports.free(ptr);
+  }
+}
+
+function packDetect(image, perspective, variantName) {
+  const name = String(variantName ?? 'otsu').slice(0, 31);
+  const bytes = new Uint8Array(48 + image.data.length);
+  const view = new DataView(bytes.buffer);
+  view.setInt32(0, image.width, true);
+  view.setInt32(4, image.height, true);
+  view.setInt32(8, perspective ? 1 : 0, true);
+  view.setInt32(12, image.data.length, true);
+  bytes.set(new TextEncoder().encode(name), 16);
+  bytes.set(image.data, 48);
+  return bytes;
+}
+
+function parseDetect(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const status = view.getInt32(0, true);
+  if (status !== 0 || view.getInt32(4, true) !== 1) {
+    throw new Error('LCC detect: no usable symbol geometry');
+  }
+  const hasH = view.getInt32(60, true) === 1;
+  const homography = hasH ? [] : null;
+  if (hasH) {
+    for (let i = 0; i < 9; i++) homography.push(view.getFloat64(64 + i * 8, true));
+  }
+  return {
+    originX: view.getFloat64(24, true),
+    originY: view.getFloat64(32, true),
+    s: view.getFloat64(16, true),
+    N: view.getInt32(12, true),
+    version: view.getInt32(8, true),
+    score: view.getFloat64(40, true),
+    threshold: view.getFloat64(48, true),
+    axis: view.getInt32(56, true) === 1,
+    has_h: hasH,
+    homography,
+  };
+}
+
+function runDetect(image, options, perspective) {
+  const variant = options.variant;
+  const name = typeof variant === 'string' ? variant : variant?.name;
+  const packed = packDetect(image, perspective, name);
+  const ptr = writeBytes(packed);
+  try {
+    const status = trapSafe(() => wasm.exports.lcc_api_detect(ptr, packed.length));
+    if (status !== 0) throw new Error('LCC detect: no usable symbol geometry');
+    return parseDetect(readLast());
+  } finally {
+    wasm.exports.free(ptr);
+  }
+}
+
+export function detectSymbolWasm(image, options = {}) {
+  return runDetect(image, options, false);
+}
+
+export function detectPerspectiveWasm(image, options = {}) {
+  return runDetect(image, options, true);
+}
+
+export function decodeExplicitWasm(image, { originX, originY, moduleSize, version, threshold = 128 }) {
+  const ptr = writeBytes(image.data);
+  try {
+    trapSafe(() => wasm.exports.lcc_api_decode_explicit(
+      ptr, image.data.length, image.width, image.height,
+      originX, originY, moduleSize, version, threshold,
+    ));
+    return parseDecode(readLast());
+  } finally {
+    wasm.exports.free(ptr);
   }
 }
 
@@ -296,14 +283,7 @@ function packScan(frames) {
     i32(frame.data.length);
     chunks.push(frame.data);
   }
-  const total = chunks.reduce((sum, part) => sum + part.length, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const part of chunks) {
-    out.set(part, offset);
-    offset += part.length;
-  }
-  return out;
+  return concat(chunks);
 }
 
 function parseDebugRecords(bytes) {
@@ -325,71 +305,59 @@ function parseDebugRecords(bytes) {
   return records;
 }
 
-
-export async function debugResidualsWasm(image, options = {}) {
-  const wasm = await loadInstance();
+export function debugResidualsWasm(image, options = {}) {
   const mode = options.detector === 'axis' ? 1 : options.detector === 'perspective' ? 2 : 0;
-  const ptr = writeBytes(wasm, image.data);
+  const ptr = writeBytes(image.data);
   try {
-    const status = trapSafe(() => wasm.lcc_api_debug_residuals(ptr, image.data.length, image.width, image.height, mode));
-    return { status, records: parseDebugRecords(readLast(wasm)) };
+    const status = trapSafe(() => wasm.exports.lcc_api_debug_residuals(ptr, image.data.length, image.width, image.height, mode));
+    return { status, records: parseDebugRecords(readLast()) };
   } finally {
-    wasm.free(ptr);
+    wasm.exports.free(ptr);
   }
 }
 
-export async function debugResidualsForcedWasm(image, homography, version, N, moduleSize) {
+export function debugResidualsForcedWasm(image, homography, version, N, moduleSize) {
   if (!Array.isArray(homography) || homography.length !== 9) {
     throw new Error('debugResidualsForcedWasm: homography must be an array of 9 numbers');
   }
-  const wasm = await loadInstance();
-  const ptr = writeBytes(wasm, image.data);
+  const ptr = writeBytes(image.data);
   try {
-    const status = trapSafe(() => wasm.lcc_api_debug_residuals_h(
+    const status = trapSafe(() => wasm.exports.lcc_api_debug_residuals_h(
       ptr, image.data.length, image.width, image.height,
       homography[0], homography[1], homography[2],
       homography[3], homography[4], homography[5],
       homography[6], homography[7], homography[8],
       version, N, moduleSize,
     ));
-    return { status, records: parseDebugRecords(readLast(wasm)) };
+    return { status, records: parseDebugRecords(readLast()) };
   } finally {
-    wasm.free(ptr);
+    wasm.exports.free(ptr);
   }
 }
 
-
 /**
  * Raw wasm exports, for security audits that need to call the C API with
- * deliberately malformed buffers.  Normal callers should use the wrappers
- * above.  The wasm instance is cached and shared.
+ * deliberately malformed buffers.
  */
-export async function wasmExports() {
-  return loadInstance();
+export function wasmExports() {
+  return wasm.exports;
 }
 
 /**
  * Current size of the wasm linear memory in bytes, plus the exported heap
- * pointers.  Used by leak/repeat-stability tests: wasm memory never shrinks,
- * so a stable value after warm-up means malloc/free are balanced.
+ * pointers.
  */
-export async function wasmMemoryStats() {
-  const wasm = await loadInstance();
-  return {
-    bytes: wasm.memory.buffer.byteLength,
-    lastPtr: wasm.lcc_last(),
-    lastLen: wasm.lcc_last_len(),
-  };
+export function wasmMemoryStats() {
+  return wasm.memoryStats();
 }
 
-export async function scanFramesWasm(frames) {
-  const wasm = await loadInstance();
+export function scanFramesWasm(frames) {
   const packed = packScan(frames);
-  const ptr = writeBytes(wasm, packed);
+  const ptr = writeBytes(packed);
   try {
-    trapSafe(() => wasm.lcc_api_scan(ptr, packed.length));
-    return parseDecode(readLast(wasm));
+    trapSafe(() => wasm.exports.lcc_api_scan(ptr, packed.length));
+    return parseDecode(readLast());
   } finally {
-    wasm.free(ptr);
+    wasm.exports.free(ptr);
   }
 }

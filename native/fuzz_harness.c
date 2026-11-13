@@ -15,6 +15,7 @@
  */
 
 #include "lcc.h"
+#include "lcc_encode_internal.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -215,6 +216,46 @@ static void mode_hostile(int iterations) {
   free(packed);
 }
 
+
+static void mode_encode(int iterations) {
+  uint8_t payload[512];
+  int ok = 0;
+  int rejected = 0;
+  for (int i = 0; i < iterations; i++) {
+    const LccEncodeLayer *layer = lcc_encode_layer_by_index(rnd_int(0, lcc_encode_layer_count() - 1));
+    const int payload_len = rnd_int(0, (int)sizeof(payload));
+    for (int j = 0; j < payload_len; j++) payload[j] = (uint8_t)next_u32();
+    LccEncodeOptions options;
+    memset(&options, 0, sizeof(options));
+    options.layer = layer ? layer->name : "G10";
+    options.width = rnd_int(64, 2048);
+    options.height = rnd_int(64, 2048);
+    options.mode = rnd_int(0, 1);
+    options.palette_mode = rnd_int(0, 1);
+    options.harmony = rnd_int(0, 1);
+    options.constraint = rnd_int(-1, 1);
+    options.seed = rnd_int(0, 63);
+    options.ecc_index = rnd_int(-1, 3);
+    options.boost_ecc = rnd_int(0, 1);
+    options.min_module = rnd_int(1, 8);
+    options.max_module = rnd_int(8, 64);
+    options.quiet_zone = rnd_int(0, 6);
+    options.min_version = rnd_int(0, 10);
+    options.max_version = rnd_int(options.min_version, 40);
+    options.module_size = rnd_int(0, 32);
+    options.version = rnd_int(0, options.max_version);
+    options.compressed = rnd_int(0, 1);
+    options.encrypted = rnd_int(0, 1);
+    LccEncodeResult result;
+    char error[128];
+    const int status = lcc_encode_payload(payload, payload_len, &options, &result, error, (int)sizeof(error));
+    if (status == LCC_OK) ok++;
+    else rejected++;
+    lcc_encode_result_free(&result);
+  }
+  fprintf(stderr, "encode: iterations=%d ok=%d rejected=%d\n", iterations, ok, rejected);
+}
+
 int main(int argc, char **argv) {
   const char *mode = argc > 1 ? argv[1] : "safe";
   const int iterations = argc > 2 ? atoi(argv[2]) : 300;
@@ -225,6 +266,8 @@ int main(int argc, char **argv) {
     mode_mismatch();
   } else if (strcmp(mode, "overflow") == 0) {
     mode_overflow();
+  } else if (strcmp(mode, "encode") == 0) {
+    mode_encode(iterations);
   } else if (strcmp(mode, "hostile") == 0) {
     mode_hostile(iterations);
   } else {

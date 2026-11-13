@@ -18,8 +18,17 @@ int lcc_gf_inv(int a);
 int lcc_gf_pow(int a, int e);
 
 uint32_t lcc_crc32(const uint8_t *bytes, int len);
+int lcc_bch15_encode(int message);
 int lcc_bch15_decode(int word);
 
+int lcc_rs_encode_blocks(
+  const uint8_t *data,
+  int data_len,
+  int total,
+  double redundancy,
+  uint8_t **out,
+  int *out_len
+);
 int lcc_rs_decode_blocks(const uint8_t *received, int len, double redundancy, uint8_t **out, int *out_len, int *corrected);
 
 typedef struct {
@@ -88,6 +97,7 @@ typedef struct {
 
 int lcc_detect_axis(const LccImage *image, const LccVariant *variant, LccFound *found);
 int lcc_detect_perspective(const LccImage *image, const LccVariant *variant, LccFound *found);
+int lcc_detect_geometry(const LccImage *image, int perspective, const char *variant_name, LccFound *found);
 int lcc_debug_decode_forced(
   const LccImage *image,
   const LccFound *found,

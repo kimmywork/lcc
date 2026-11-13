@@ -124,6 +124,17 @@ int lcc_stack_frames(
   int *out_source);
 
 int lcc_decode_image(const LccImage *image, int mode, uint8_t **payload, int *payload_len, LccDecodeMeta *meta);
+int lcc_decode_explicit(
+  const LccImage *image,
+  double origin_x,
+  double origin_y,
+  double module_size,
+  int version,
+  double threshold,
+  uint8_t **payload,
+  int *payload_len,
+  LccDecodeMeta *meta
+);
 int lcc_scan_frames(const LccImage *frames, int count, uint8_t **payload, int *payload_len, LccDecodeMeta *meta);
 
 void *lcc_alloc(size_t n);
@@ -138,6 +149,7 @@ int lcc_valid_symbol_size(int N);
 int lcc_homography_safe(const double H[9], int N);
 
 int lcc_api_stack(const uint8_t *input, int input_len);
+int lcc_api_detect(const uint8_t *input, int input_len);
 int lcc_api_decode(const uint8_t *rgb, size_t rgb_len, int width, int height, int mode);
 int lcc_api_scan(const uint8_t *input, int input_len);
 uint8_t *lcc_last(void);

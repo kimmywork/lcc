@@ -11,7 +11,7 @@ import { performance } from 'node:perf_hooks';
 
 import { decodeAuto, encode } from '../../src/index.js';
 import { decodePNG, encodePNG } from '../../src/png.js';
-import { decodeAutoWasm, wasmMemoryStats } from '../../docs/lib/lcc-wasm.js';
+import { decodeAutoWasm, wasmMemoryStats } from '../../src/lcc-wasm.js';
 import { mulberry32 } from './rng.mjs';
 
 const ITER = Number(process.env.LEAK_ITER) || 200;
