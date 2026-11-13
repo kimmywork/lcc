@@ -12,6 +12,40 @@ void *lcc_alloc(size_t n) {
   return calloc(1, n ? n : 1);
 }
 
+int lcc_image_geometry(int width, int height, size_t *bytes) {
+  if (width <= 0 || height <= 0) return 0;
+  const int64_t px = (int64_t)width * (int64_t)height;
+  if (px <= 0 || px > (int64_t)LCC_MAX_PIXELS) return 0;
+  if (bytes) *bytes = (size_t)px * 3u;
+  return 1;
+}
+
+int lcc_valid_symbol_size(int N) {
+  if (N < 21 || N > 21 + 4 * 99) return 0;
+  return ((N - 21) % 4) == 0;
+}
+
+int lcc_homography_safe(const double H[9], int N) {
+  if (!H || N <= 0) return 0;
+  for (int i = 0; i < 9; i++) {
+    if (!isfinite(H[i]) || fabs(H[i]) > 1e9) return 0;
+  }
+  const double pts[9][2] = {
+    { 0.0, 0.0 }, { N, 0.0 }, { 0.0, N }, { N, N }, { N / 2.0, N / 2.0 },
+    { 3.5, 3.5 }, { N - 3.5, 3.5 }, { 3.5, N - 3.5 }, { N - 3.5, N - 3.5 },
+  };
+  for (int i = 0; i < 9; i++) {
+    const double u = pts[i][0];
+    const double v = pts[i][1];
+    const double den = H[6] * u + H[7] * v + H[8];
+    if (!isfinite(den) || fabs(den) < 1e-9) return 0;
+    const double x = (H[0] * u + H[1] * v + H[2]) / den;
+    const double y = (H[3] * u + H[4] * v + H[5]) / den;
+    if (!isfinite(x) || !isfinite(y) || fabs(x) > 1e7 || fabs(y) > 1e7) return 0;
+  }
+  return 1;
+}
+
 void lcc_release(void *p) {
   free(p);
 }
@@ -37,6 +71,13 @@ static int clampi(int v, int lo, int hi) {
 }
 
 void lcc_sample_image(const LccImage *image, double x, double y, int radius, int rgb[3]) {
+  if (!isfinite(x) || !isfinite(y) ||
+      x < -1.0 || y < -1.0 || x > image->width + 1.0 || y > image->height + 1.0) {
+    rgb[0] = rgb[1] = rgb[2] = 255;
+    return;
+  }
+  x = fmin(fmax(x, 0.0), image->width - 1.0);
+  y = fmin(fmax(y, 0.0), image->height - 1.0);
   const int cx = (int)lcc_js_round(x);
   const int cy = (int)lcc_js_round(y);
   int r = 0;
@@ -64,6 +105,13 @@ void lcc_sample_image(const LccImage *image, double x, double y, int radius, int
 }
 
 void lcc_sample_bilinear(const LccImage *image, double x, double y, int rgb[3]) {
+  if (!isfinite(x) || !isfinite(y) ||
+      x < -1.0 || y < -1.0 || x > image->width + 1.0 || y > image->height + 1.0) {
+    rgb[0] = rgb[1] = rgb[2] = 255;
+    return;
+  }
+  x = fmin(fmax(x, 0.0), image->width - 1.0);
+  y = fmin(fmax(y, 0.0), image->height - 1.0);
   const int x0 = (int)floor(x);
   const int y0 = (int)floor(y);
   const double fx = x - x0;

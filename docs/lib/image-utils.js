@@ -116,3 +116,23 @@ export const FINDER_PATTERN = [
   [0, 1, 1, 1, 1, 1, 0],
   [0, 0, 0, 0, 0, 0, 0],
 ];
+
+export const MAX_IMAGE_PIXELS = 32 * 1024 * 1024;
+
+/**
+ * Reject inconsistent or oversized image objects before any allocation or
+ * sampling.  JS is memory-safe, but trusting width/height still allows CPU and
+ * memory amplification from untrusted metadata.
+ */
+export function validateImage(image, maxPixels = MAX_IMAGE_PIXELS) {
+  if (!image || typeof image !== 'object') throw new Error('LCC: invalid image');
+  const { width, height, data } = image;
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
+    throw new Error('LCC: invalid image dimensions');
+  }
+  const pixels = width * height;
+  if (pixels > maxPixels) throw new Error('LCC: image too large');
+  if (!data || typeof data.length !== 'number' || data.length !== pixels * 3) {
+    throw new Error('LCC: image data length does not match dimensions');
+  }
+}

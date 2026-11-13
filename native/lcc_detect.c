@@ -526,9 +526,9 @@ int lcc_detect_perspective(const LccImage *image, const LccVariant *variant, Lcc
           if (v1 > 100) v1 = 100;
           for (int v = v0; v <= v1; v++) {
             const int N = version_to_size(v);
-            double H[9];
-            int have_h = 0;
-            int aligned = 0;
+            double hyps[3][9];
+            int hyp_kind[3];
+            int nh = 0;
             if (N >= 25) {
               const double ex = rings[tr].x + rings[bl].x - rings[tl].x;
               const double ey = rings[tr].y + rings[bl].y - rings[tl].y;
@@ -549,26 +549,32 @@ int lcc_detect_perspective(const LccImage *image, const LccVariant *variant, Lcc
                   best_align = c;
                 }
               }
+              const double src[4][2] = {
+                { 3.5, 3.5 },
+                { N - 3.5, 3.5 },
+                { 3.5, N - 3.5 },
+                { N - 3.5, N - 3.5 },
+              };
               if (best_align >= 0) {
-                const double src[4][2] = {
-                  { 3.5, 3.5 },
-                  { N - 3.5, 3.5 },
-                  { 3.5, N - 3.5 },
-                  { N - 3.5, N - 3.5 },
-                };
                 const double dst[4][2] = {
                   { rings[tl].x, rings[tl].y },
                   { rings[tr].x, rings[tr].y },
                   { rings[bl].x, rings[bl].y },
                   { rings[best_align].x, rings[best_align].y },
                 };
-                if (compute_h(src, dst, H)) {
-                  have_h = 1;
-                  aligned = 1;
-                }
+                if (compute_h(src, dst, hyps[nh])) hyp_kind[nh++] = 0;
               }
+              // Parallelogram hypothesis: exact for rotation/scale/translation
+              // and a good initialisation under mild perspective.
+              const double dst_para[4][2] = {
+                { rings[tl].x, rings[tl].y },
+                { rings[tr].x, rings[tr].y },
+                { rings[bl].x, rings[bl].y },
+                { ex, ey },
+              };
+              if (compute_h(src, dst_para, hyps[nh])) hyp_kind[nh++] = 1;
             }
-            if (!have_h) {
+            {
               int used[4] = { 0, 0, 0, 0 };
               double picked[4][2];
               const double targets[3][2] = {
@@ -578,67 +584,71 @@ int lcc_detect_perspective(const LccImage *image, const LccVariant *variant, Lcc
               };
               int ok = 1;
               for (int t = 0; t < 3; t++) {
-                int best = -1;
-                double best_d = INFINITY;
+                int bestc = -1;
+                double best_cd = INFINITY;
                 for (int c = 0; c < 4; c++) {
                   if (used[c]) continue;
                   const double d = hypot(corners[c][0] - targets[t][0], corners[c][1] - targets[t][1]);
-                  if (d < best_d) {
-                    best_d = d;
-                    best = c;
+                  if (d < best_cd) {
+                    best_cd = d;
+                    bestc = c;
                   }
                 }
-                if (best < 0) {
+                if (bestc < 0) {
                   ok = 0;
                   break;
                 }
-                used[best] = 1;
-                picked[t][0] = corners[best][0];
-                picked[t][1] = corners[best][1];
+                used[bestc] = 1;
+                picked[t][0] = corners[bestc][0];
+                picked[t][1] = corners[bestc][1];
               }
-              if (!ok) continue;
-              int br = -1;
-              for (int c = 0; c < 4; c++) {
-                if (!used[c]) {
-                  br = c;
-                  break;
+              if (ok) {
+                int br = -1;
+                for (int c = 0; c < 4; c++) {
+                  if (!used[c]) {
+                    br = c;
+                    break;
+                  }
+                }
+                if (br >= 0) {
+                  picked[3][0] = corners[br][0];
+                  picked[3][1] = corners[br][1];
+                  const double src[4][2] = { { 0, 0 }, { N, 0 }, { 0, N }, { N, N } };
+                  if (compute_h(src, picked, hyps[nh])) hyp_kind[nh++] = 2;
                 }
               }
-              if (br < 0) continue;
-              picked[3][0] = corners[br][0];
-              picked[3][1] = corners[br][1];
-              const double src[4][2] = { { 0, 0 }, { N, 0 }, { 0, N }, { N, N } };
-              if (!compute_h(src, picked, H)) continue;
-              have_h = 1;
-              aligned = 0;
             }
-            const double score_tl = finder_score_h(H, image, variant, 0, 0);
-            const double score_tr = finder_score_h(H, image, variant, 0, N - 7);
-            const double score_bl = finder_score_h(H, image, variant, N - 7, 0);
-            double score_a = 1;
-            if (aligned) {
-              score_a = alignment_score(H, image, variant, N);
-              if (score_a < 0.65) continue;
-            }
-            const double min_score = score_tl < score_tr
-              ? (score_tl < score_bl ? (score_tl < score_a ? score_tl : score_a) : (score_bl < score_a ? score_bl : score_a))
-              : (score_tr < score_bl ? (score_tr < score_a ? score_tr : score_a) : (score_bl < score_a ? score_bl : score_a));
-            if (min_score < 0.65) continue;
-            const double score_t = timing_score(H, image, variant, N);
-            const double consistency = 1 - (fabs(n1 - n2) / N > 1 ? 1 : fabs(n1 - n2) / N);
-            const double total = min_score + 0.5 * score_t + 0.1 * consistency;
-            if (!best_ok || total > best_total) {
-              best_ok = 1;
-              best_total = total;
-              memset(&best, 0, sizeof(best));
-              best.version = v;
-              best.N = N;
-              best.s = (rings[tl].s + rings[tr].s + rings[bl].s) / 3;
-              best.score = total;
-              best.has_h = 1;
-              best.axis = 0;
-              memcpy(best.H, H, sizeof(H));
-              best.threshold = lcc_threshold_at(variant, width / 2.0, height / 2.0);
+            for (int hi = 0; hi < nh; hi++) {
+              double *H = hyps[hi];
+              const int aligned = hyp_kind[hi] == 0;
+              const double score_tl = finder_score_h(H, image, variant, 0, 0);
+              const double score_tr = finder_score_h(H, image, variant, 0, N - 7);
+              const double score_bl = finder_score_h(H, image, variant, N - 7, 0);
+              double score_a = 1;
+              if (aligned) {
+                score_a = alignment_score(H, image, variant, N);
+                if (score_a < 0.65) continue;
+              }
+              const double min_score = score_tl < score_tr
+                ? (score_tl < score_bl ? (score_tl < score_a ? score_tl : score_a) : (score_bl < score_a ? score_bl : score_a))
+                : (score_tr < score_bl ? (score_tr < score_a ? score_tr : score_a) : (score_bl < score_a ? score_bl : score_a));
+              if (min_score < 0.65) continue;
+              const double score_t = timing_score(H, image, variant, N);
+              const double consistency = 1 - (fabs(n1 - n2) / N > 1 ? 1 : fabs(n1 - n2) / N);
+              const double total = min_score + 0.5 * score_t + 0.1 * consistency;
+              if (!best_ok || total > best_total) {
+                best_ok = 1;
+                best_total = total;
+                memset(&best, 0, sizeof(best));
+                best.version = v;
+                best.N = N;
+                best.s = (rings[tl].s + rings[tr].s + rings[bl].s) / 3;
+                best.score = total;
+                best.has_h = 1;
+                best.axis = 0;
+                memcpy(best.H, H, sizeof(double) * 9);
+                best.threshold = lcc_threshold_at(variant, width / 2.0, height / 2.0);
+              }
             }
           }
         }

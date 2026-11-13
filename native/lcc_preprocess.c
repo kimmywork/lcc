@@ -129,18 +129,20 @@ static uint8_t *morph_close(const uint8_t *mask, int width, int height) {
 
 int lcc_prep_init(LccPrep *prep, const LccImage *image) {
   memset(prep, 0, sizeof(*prep));
-  const int n = image->width * image->height;
+  size_t bytes = 0;
+  if (!lcc_image_geometry(image->width, image->height, &bytes)) return 0;
+  const size_t n = bytes / 3;
   prep->width = image->width;
   prep->height = image->height;
   prep->rgb = image->data;
-  prep->gray = lcc_alloc((size_t)n);
-  prep->value = lcc_alloc((size_t)n);
-  prep->sat = lcc_alloc((size_t)n * sizeof(float));
+  prep->gray = lcc_alloc(n);
+  prep->value = lcc_alloc(n);
+  prep->sat = lcc_alloc(n * sizeof(float));
   if (!prep->gray || !prep->value || !prep->sat) {
     lcc_prep_free(prep);
     return 0;
   }
-  for (int i = 0, p = 0; i < n; i++, p += 3) {
+  for (size_t i = 0, p = 0; i < n; i++, p += 3) {
     const int r = image->data[p];
     const int g = image->data[p + 1];
     const int b = image->data[p + 2];
@@ -150,8 +152,8 @@ int lcc_prep_init(LccPrep *prep, const LccImage *image) {
     prep->value[i] = (uint8_t)mx;
     prep->sat[i] = mx == 0 ? 0 : (float)(mx - mn) / (float)mx;
   }
-  prep->gray_otsu = robust_threshold(prep->gray, n);
-  prep->value_otsu = robust_threshold(prep->value, n);
+  prep->gray_otsu = robust_threshold(prep->gray, (int)n);
+  prep->value_otsu = robust_threshold(prep->value, (int)n);
   prep->gray_integral = integral_image(prep->gray, image->width, image->height);
   prep->value_integral = integral_image(prep->value, image->width, image->height);
   if (!prep->gray_integral || !prep->value_integral) {
@@ -192,7 +194,7 @@ int lcc_variant_build(LccPrep *prep, const char *name, LccVariant *out) {
   memset(out, 0, sizeof(*out));
   out->width = prep->width;
   out->height = prep->height;
-  const int n = prep->width * prep->height;
+  const size_t n = (size_t)prep->width * (size_t)prep->height;
   const int value = strncmp(name, "value-", 6) == 0;
   const char *body = value ? name + 6 : name;
   int close = 0;
@@ -206,11 +208,11 @@ int lcc_variant_build(LccPrep *prep, const char *name, LccVariant *out) {
   const uint8_t *src = value ? prep->value : prep->gray;
   const double *integral = value ? prep->value_integral : prep->gray_integral;
   const double otsu = value ? prep->value_otsu : prep->gray_otsu;
-  uint8_t *mask = lcc_alloc((size_t)n);
+  uint8_t *mask = lcc_alloc(n);
   if (!mask) return 0;
   float *threshold = NULL;
   if (strcmp(base, "otsu") == 0) {
-    for (int i = 0; i < n; i++) {
+    for (size_t i = 0; i < n; i++) {
       int on = src[i] < otsu;
       if (value) on = on && (prep->sat[i] < 0.5f || prep->value[i] < 80);
       mask[i] = (uint8_t)on;
@@ -245,7 +247,7 @@ int lcc_variant_build(LccPrep *prep, const char *name, LccVariant *out) {
     }
     adaptive_mask(src, prep->width, prep->height, integral, window, offset, mask, threshold);
     if (value) {
-      for (int i = 0; i < n; i++) {
+      for (size_t i = 0; i < n; i++) {
         mask[i] = mask[i] && (prep->sat[i] < 0.5f || prep->value[i] < 80) ? 1 : 0;
       }
     }

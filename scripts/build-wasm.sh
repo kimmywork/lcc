@@ -52,6 +52,7 @@ else
   export ZIG_LOCAL_CACHE_DIR="${ZIG_LOCAL_CACHE_DIR:-$ROOT/.zig-cache}"
   # shellcheck disable=SC2086
   zig cc -target wasm32-wasi -mcpu=generic+simd128 -O3 -Inative $SOURCES \
+    -mexec-model=reactor \
     -o docs/lib/lcc.wasm \
     -Wl,--no-entry \
     -Wl,--export=lcc_api_stack \

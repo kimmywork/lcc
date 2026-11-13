@@ -5,6 +5,34 @@
 
 let instancePromise = null;
 
+/** Drop the cached instance (a wasm trap can leave allocator state unusable). */
+export function resetWasmInstance() {
+  instancePromise = null;
+}
+
+let forcedTrap = false;
+
+/** Test-only hook: make the next protected wasm call throw a RuntimeError. */
+export function forceNextWasmTrap() {
+  forcedTrap = true;
+}
+
+function trapSafe(fn) {
+  if (forcedTrap) {
+    forcedTrap = false;
+    instancePromise = null;
+    const err = new Error('forced wasm trap');
+    err.name = 'RuntimeError';
+    throw err;
+  }
+  try {
+    return fn();
+  } catch (err) {
+    if (err && err.name === 'RuntimeError') instancePromise = null;
+    throw err;
+  }
+}
+
 function wasiImports() {
   let memory = null;
   const view = () => new DataView(memory.buffer);
@@ -235,7 +263,7 @@ export async function stackCanonicalFramesWasm(frames, detections, options = {})
   const packed = packStack(frames, detections, options);
   const ptr = writeBytes(wasm, packed);
   try {
-    wasm.lcc_api_stack(ptr, packed.length);
+    trapSafe(() => wasm.lcc_api_stack(ptr, packed.length));
     return parseStack(readLast(wasm));
   } finally {
     wasm.free(ptr);
@@ -247,7 +275,7 @@ export async function decodeAutoWasm(image, options = {}) {
   const mode = options.detector === 'axis' ? 1 : options.detector === 'perspective' ? 2 : 0;
   const ptr = writeBytes(wasm, image.data);
   try {
-    wasm.lcc_api_decode(ptr, image.width, image.height, mode);
+    trapSafe(() => wasm.lcc_api_decode(ptr, image.data.length, image.width, image.height, mode));
     return parseDecode(readLast(wasm));
   } finally {
     wasm.free(ptr);
@@ -303,7 +331,7 @@ export async function debugResidualsWasm(image, options = {}) {
   const mode = options.detector === 'axis' ? 1 : options.detector === 'perspective' ? 2 : 0;
   const ptr = writeBytes(wasm, image.data);
   try {
-    const status = wasm.lcc_api_debug_residuals(ptr, image.width, image.height, mode);
+    const status = trapSafe(() => wasm.lcc_api_debug_residuals(ptr, image.data.length, image.width, image.height, mode));
     return { status, records: parseDebugRecords(readLast(wasm)) };
   } finally {
     wasm.free(ptr);
@@ -317,13 +345,13 @@ export async function debugResidualsForcedWasm(image, homography, version, N, mo
   const wasm = await loadInstance();
   const ptr = writeBytes(wasm, image.data);
   try {
-    const status = wasm.lcc_api_debug_residuals_h(
-      ptr, image.width, image.height,
+    const status = trapSafe(() => wasm.lcc_api_debug_residuals_h(
+      ptr, image.data.length, image.width, image.height,
       homography[0], homography[1], homography[2],
       homography[3], homography[4], homography[5],
       homography[6], homography[7], homography[8],
       version, N, moduleSize,
-    );
+    ));
     return { status, records: parseDebugRecords(readLast(wasm)) };
   } finally {
     wasm.free(ptr);
@@ -331,12 +359,35 @@ export async function debugResidualsForcedWasm(image, homography, version, N, mo
 }
 
 
+/**
+ * Raw wasm exports, for security audits that need to call the C API with
+ * deliberately malformed buffers.  Normal callers should use the wrappers
+ * above.  The wasm instance is cached and shared.
+ */
+export async function wasmExports() {
+  return loadInstance();
+}
+
+/**
+ * Current size of the wasm linear memory in bytes, plus the exported heap
+ * pointers.  Used by leak/repeat-stability tests: wasm memory never shrinks,
+ * so a stable value after warm-up means malloc/free are balanced.
+ */
+export async function wasmMemoryStats() {
+  const wasm = await loadInstance();
+  return {
+    bytes: wasm.memory.buffer.byteLength,
+    lastPtr: wasm.lcc_last(),
+    lastLen: wasm.lcc_last_len(),
+  };
+}
+
 export async function scanFramesWasm(frames) {
   const wasm = await loadInstance();
   const packed = packScan(frames);
   const ptr = writeBytes(wasm, packed);
   try {
-    wasm.lcc_api_scan(ptr, packed.length);
+    trapSafe(() => wasm.lcc_api_scan(ptr, packed.length));
     return parseDecode(readLast(wasm));
   } finally {
     wasm.free(ptr);

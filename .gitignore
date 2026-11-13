@@ -1,6 +1,7 @@
 node_modules/
 .zig-cache/
 .em-cache/
+bench-results/
 photo/
 .agents/
 skills-lock.json

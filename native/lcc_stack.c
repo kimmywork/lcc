@@ -35,15 +35,29 @@ int lcc_stack_frames(
   int *out_quiet,
   int *out_source
 ) {
-  if (count <= 0 || quiet_zone < 0) return LCC_BAD_INPUT;
+  if (count <= 0 || count > 16) return LCC_BAD_INPUT;
+  if (quiet_zone < 0 || quiet_zone > 64) return LCC_BAD_INPUT;
+  if (module_size < 0 || module_size > 64) return LCC_BAD_INPUT;
   if (max_dimension <= 0) max_dimension = 1400;
+  if (max_dimension > 8192) return LCC_BAD_INPUT;
   if (noise_stride <= 0) noise_stride = 257;
+  if (noise_stride > (1 << 20)) return LCC_BAD_INPUT;
 
   int *valid = lcc_alloc((size_t)count * sizeof(int));
   if (!valid) return LCC_ERR;
   int nvalid = 0;
   for (int i = 0; i < count; i++) {
+    size_t frame_bytes = 0;
+    if (!frames[i].data || !lcc_image_geometry(frames[i].width, frames[i].height, &frame_bytes)) {
+      lcc_release(valid);
+      return LCC_BAD_INPUT;
+    }
     if (!dets[i].valid) continue;
+    if (!lcc_valid_symbol_size(dets[i].N) || dets[i].version < 1 || dets[i].version > 100 ||
+        !isfinite(dets[i].s) || dets[i].s < 0 || dets[i].s > 4096) {
+      lcc_release(valid);
+      return LCC_BAD_INPUT;
+    }
     valid[nvalid++] = i;
   }
   if (nvalid == 0) {
@@ -52,11 +66,20 @@ int lcc_stack_frames(
   }
 
   int *best = lcc_alloc((size_t)nvalid * sizeof(int));
+  if (!best) {
+    lcc_release(valid);
+    return LCC_ERR;
+  }
   int best_n = 0;
   double best_score = -INFINITY;
   for (int i = 0; i < nvalid; i++) {
     const LccDet *seed = &dets[valid[i]];
     int *group = lcc_alloc((size_t)nvalid * sizeof(int));
+    if (!group) {
+      lcc_release(valid);
+      lcc_release(best);
+      return LCC_ERR;
+    }
     int gn = 0;
     double score = 0;
     for (int j = 0; j < nvalid; j++) {
@@ -78,6 +101,10 @@ int lcc_stack_frames(
 
   const LccDet *ref = &dets[best[0]];
   const int total = ref->N + 2 * quiet_zone;
+  if (total <= 0 || total > 4096) {
+    lcc_release(best);
+    return LCC_BAD_INPUT;
+  }
   int module = module_size;
   if (module <= 0) {
     const double s = ref->s > 0 ? ref->s : 16;
@@ -104,12 +131,22 @@ int lcc_stack_frames(
     return ok ? LCC_OK : LCC_ERR;
   }
 
-  const int width = total * module;
-  const int height = total * module;
-  const size_t pixels = (size_t)width * (size_t)height;
-  float *sum = lcc_alloc(pixels * 3 * sizeof(float));
-  uint16_t *counts = lcc_alloc(pixels * sizeof(uint16_t));
-  uint8_t *data = lcc_alloc(pixels * 3);
+  const int64_t width64 = (int64_t)total * module;
+  if (width64 <= 0 || width64 > 32768) {
+    lcc_release(best);
+    return LCC_BAD_INPUT;
+  }
+  const int width = (int)width64;
+  const int height = width;
+  size_t byte_count = 0;
+  if (!lcc_image_geometry(width, height, &byte_count)) {
+    lcc_release(best);
+    return LCC_BAD_INPUT;
+  }
+  const size_t pixel_count = byte_count / 3;
+  float *sum = lcc_alloc(pixel_count * 3 * sizeof(float));
+  uint16_t *counts = lcc_alloc(pixel_count * sizeof(uint16_t));
+  uint8_t *data = lcc_alloc(byte_count);
   if (!sum || !counts || !data) {
     lcc_release(sum);
     lcc_release(counts);
@@ -117,7 +154,7 @@ int lcc_stack_frames(
     lcc_release(best);
     return LCC_ERR;
   }
-  memset(data, 255, pixels * 3);
+  memset(data, 255, byte_count);
 
   typedef struct { float *v; int n; int cap; } Noise;
   Noise *noises = NULL;
@@ -171,7 +208,7 @@ int lcc_stack_frames(
         if (!isfinite(sx) || !isfinite(sy)) continue;
         int rgb[3];
         lcc_sample_bilinear(frame, sx, sy, rgb);
-        const size_t p = (size_t)y * width + (size_t)x;
+        const size_t p = (size_t)y * (size_t)width + (size_t)x;
         const size_t q = p * 3;
         sum[q] += (float)rgb[0];
         sum[q + 1] += (float)rgb[1];
@@ -203,7 +240,7 @@ int lcc_stack_frames(
     }
   }
 
-  for (size_t p = 0; p < pixels; p++) {
+  for (size_t p = 0; p < pixel_count; p++) {
     const int n = counts[p];
     if (n == 0) continue;
     const size_t q = p * 3;

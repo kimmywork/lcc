@@ -1878,6 +1878,10 @@ static int scan_frames_impl(
 }
 
 int lcc_decode_image(const LccImage *image, int mode, uint8_t **payload, int *payload_len, LccDecodeMeta *meta) {
+  size_t bytes = 0;
+  if (!image || !image->data || !lcc_image_geometry(image->width, image->height, &bytes) || mode < 0 || mode > 2) {
+    return LCC_BAD_INPUT;
+  }
   const int status = decode_image_impl(image, mode, payload, payload_len, meta, 12);
   if (status == LCC_OK || !image || mode == 1) return status;
   LccImage balanced;
