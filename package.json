@@ -9,6 +9,16 @@
   },
   "scripts": {
     "test": "node --test",
+    "test:property": "node --test test/property",
+    "test:fuzz": "node scripts/fuzz-lcc.mjs",
+    "test:security": "node --test test/security",
+    "test:perf": "node --test test/perf",
+    "test:native": "sh scripts/fuzz-native.sh",
+    "test:native:audit": "sh scripts/fuzz-native.sh --audit",
+    "audit:wasm": "node scripts/audit-wasm.mjs",
+    "bench": "node --expose-gc scripts/bench-lcc.mjs --json bench-results/perf.json",
+    "bench:quick": "node --expose-gc scripts/bench-lcc.mjs --quick",
+    "bench:qr": "node scripts/bench-qr.mjs --json bench-results/qr.json",
     "demo": "node examples/text-examples.js",
     "shape:examples": "node examples/shape-examples.js",
     "shape32:examples": "node examples/shape32-examples.js",
@@ -16,10 +26,18 @@
     "build:wasm": "sh scripts/build-wasm.sh",
     "build:web": "node scripts/build-web.js",
     "web": "node scripts/serve-web.js",
-    "qr:examples": "python3 scripts/make-qr-examples.py"
+    "qr:examples": "python3 scripts/make-qr-examples.py",
+    "bench:camera": "node scripts/bench-camera.mjs --json bench-results/camera.json",
+    "bench:damage": "node scripts/bench-damage.mjs --json bench-results/damage.json",
+    "test:repro": "node --test test/property/reproducibility.test.js test/property/collision.test.js"
   },
   "engines": {
     "node": ">=18"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "jpeg-js": "^0.4.4",
+    "jsqr": "^1.4.0",
+    "qrcode": "^1.5.4"
+  }
 }

@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: unit/property/fuzz (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:fuzz -- --iterations 300 --seed 7 --strict
+      - run: npm run test:security
+      - run: npm run audit:wasm
+
+  native:
+    name: native ASan/UBSan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+      - run: npm run test:native
+      - run: npm run test:native:audit
+
+  wasm:
+    name: rebuild wasm + wasm tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
+      - run: npm ci
+      - run: npm run build:wasm
+      - run: npm test
+
+  bench:
+    name: benchmark smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run bench:quick
+      - run: npm run bench:camera -- --seeds 1 --layers G10,G20,C40 --ecc M
+      - run: npm run bench:damage -- --trials 1 --layers G10,G20,C40 --ecc L,M
+      - run: npm run bench:qr -- --canvas 512
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results
+          path: bench-results/
+          retention-days: 14

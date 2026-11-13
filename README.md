@@ -131,6 +131,26 @@ npm run build:web            # 复制浏览器核心到 docs/lib（保留 wasm�
 npm run web                  # http://localhost:8080
 ```
 
+性能、稳定性、安全与 QR 对比测试：
+
+```bash
+npm run test:property        # property-based：往返、容量、ECC、格式带
+npm run test:fuzz            # 随机输入 fuzz（--iterations/--seed 可调）
+npm run test:security        # 内存泄漏、受限堆、边界/恶意输入
+npm run test:repro           # 参数/跨进程可复现性与碰撞检查
+npm run test:native          # 原生 ASan/UBSan 门禁（需要 clang）
+npm run test:native:audit    # 攻击探针：buffer 长度、整数溢出
+npm run audit:wasm           # 畸形 WASM 输入的泄漏/状态隔离审计
+npm run bench                # 性能基准（C/WASM 解码为主）-> bench-results/perf.json
+npm run bench:camera         # 偏色/模糊/透视/旋转/JPEG/降采样等真实退化
+npm run bench:damage         # 模块级损坏、遮挡、格式带损坏的容忍曲线
+npm run bench:qr             # 与 QR Code 的编解码/分辨率/密度对比
+```
+
+`bench:qr` / `bench:camera` 需要先 `npm install`（devDependencies：`qrcode`、`jsqr`、`jpeg-js`）；`test:native` 需要 clang。CI 配置见 `.github/workflows/ci.yml`；最近一轮结果、修复记录与剩余风险见 [测试报告](docs/research/lcc-test-report-2026-11.md)。
+
+> 输入上限：C/JS 解码器默认拒绝超过 32 MP 的图像；真实高像素照片应先在调用方降采样。
+
 QR 对比图用 [segno](https://pypi.org/project/segno/) 生成，仅用于文档，不是 LCC 依赖：
 
 ```bash
