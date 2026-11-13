@@ -9,10 +9,10 @@
   },
   "scripts": {
     "test": "node --test",
-    "test:property": "node --test test/property",
+    "test:property": "node --test test/property/*.test.js",
     "test:fuzz": "node scripts/fuzz-lcc.mjs",
-    "test:security": "node --test test/security",
-    "test:perf": "node --test test/perf",
+    "test:security": "node --test test/security/*.test.js",
+    "test:perf": "node --test test/perf/*.test.js",
     "test:native": "sh scripts/fuzz-native.sh",
     "test:native:audit": "sh scripts/fuzz-native.sh --audit",
     "audit:wasm": "node scripts/audit-wasm.mjs",

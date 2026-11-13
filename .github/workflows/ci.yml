@@ -59,7 +59,7 @@ jobs:
           cache: npm
       - uses: goto-bus-stop/setup-zig@v2
         with:
-          version: 0.13.0
+          version: 0.16.0
       - run: npm ci
       - run: npm run build:wasm
       - run: npm test
