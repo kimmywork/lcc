@@ -8,7 +8,7 @@
  * axis-aligned decoder.
  */
 
-import { sampleImageBilinear } from './image-utils.js';
+import { sampleImageBilinear, validateImage } from './image-utils.js';
 
 function groupKey(det) {
   return `${det.version}|${det.N}`;
@@ -30,10 +30,12 @@ function pointAtOf(det) {
  */
 export function stackCanonicalFrames(frames, detections, options = {}) {
   const requested = frames.length;
+  for (const frame of frames) validateImage(frame);
   const valid = [];
   for (let i = 0; i < frames.length; i++) {
     const det = detections[i];
     if (!det || !Number.isFinite(det.version) || !Number.isFinite(det.N)) continue;
+    if (!Number.isInteger(det.N) || det.N < 21 || det.N > 1000) continue;
     valid.push({ frame: frames[i], det, index: i });
   }
   if (valid.length === 0) throw new Error('stack: no frame with a detected symbol');
@@ -59,11 +61,16 @@ export function stackCanonicalFrames(frames, detections, options = {}) {
   }
 
   const ref = best[0].det;
-  const quietZone = options.quietZone ?? 4;
+  const quietZone = Number.isInteger(options.quietZone) && options.quietZone >= 0 && options.quietZone <= 64
+    ? options.quietZone
+    : 4;
   const total = ref.N + 2 * quietZone;
-  const maxDimension = options.maxDimension ?? 1400;
-  let moduleSize = options.moduleSize
-    ?? Math.max(16, Math.min(24, Math.round(ref.s || 16)));
+  const maxDimension = Number.isInteger(options.maxDimension) && options.maxDimension > 0 && options.maxDimension <= 8192
+    ? options.maxDimension
+    : 1400;
+  let moduleSize = Number.isInteger(options.moduleSize) && options.moduleSize > 0 && options.moduleSize <= 64
+    ? options.moduleSize
+    : Math.max(16, Math.min(24, Math.round(ref.s || 16)));
   moduleSize = Math.max(12, Math.min(moduleSize, Math.floor(maxDimension / total)));
 
   if (best.length === 1) {

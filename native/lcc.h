@@ -8,6 +8,10 @@
 extern "C" {
 #endif
 
+/* Hard bounds for untrusted image dimensions.  32 MP keeps width*height*3
+   inside a signed 32-bit int while still accepting 8K/12K camera frames. */
+#define LCC_MAX_PIXELS (32u * 1024u * 1024u)
+
 typedef struct {
   int width;
   int height;
@@ -125,15 +129,21 @@ int lcc_scan_frames(const LccImage *frames, int count, uint8_t **payload, int *p
 void *lcc_alloc(size_t n);
 void lcc_release(void *p);
 
+/* Returns 1 when width/height are positive and within LCC_MAX_PIXELS.
+   bytes receives width*height*3 when non-NULL. */
+int lcc_image_geometry(int width, int height, size_t *bytes);
+/* Returns 1 when N is a supported symbol size (21 + 4*(v-1), v in 1..100). */
+int lcc_valid_symbol_size(int N);
+
 int lcc_api_stack(const uint8_t *input, int input_len);
-int lcc_api_decode(const uint8_t *rgb, int width, int height, int mode);
+int lcc_api_decode(const uint8_t *rgb, size_t rgb_len, int width, int height, int mode);
 int lcc_api_scan(const uint8_t *input, int input_len);
 uint8_t *lcc_last(void);
 int lcc_last_len(void);
 
-int lcc_api_debug_residuals(const uint8_t *rgb, int width, int height, int mode);
+int lcc_api_debug_residuals(const uint8_t *rgb, size_t rgb_len, int width, int height, int mode);
 int lcc_api_debug_residuals_h(
-  const uint8_t *rgb, int width, int height,
+  const uint8_t *rgb, size_t rgb_len, int width, int height,
   double h0, double h1, double h2,
   double h3, double h4, double h5,
   double h6, double h7, double h8,

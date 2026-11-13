@@ -12,6 +12,19 @@ void *lcc_alloc(size_t n) {
   return calloc(1, n ? n : 1);
 }
 
+int lcc_image_geometry(int width, int height, size_t *bytes) {
+  if (width <= 0 || height <= 0) return 0;
+  const int64_t px = (int64_t)width * (int64_t)height;
+  if (px <= 0 || px > (int64_t)LCC_MAX_PIXELS) return 0;
+  if (bytes) *bytes = (size_t)px * 3u;
+  return 1;
+}
+
+int lcc_valid_symbol_size(int N) {
+  if (N < 21 || N > 21 + 4 * 99) return 0;
+  return ((N - 21) % 4) == 0;
+}
+
 void lcc_release(void *p) {
   free(p);
 }

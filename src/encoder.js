@@ -235,31 +235,49 @@ function render(symbols, layout, palette, moduleSize, quietZone, layer) {
   return { width: size, height: size, data };
 }
 
+function intOption(value, name, min, max) {
+  if (value === undefined) return undefined;
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`LCC: ${name} must be an integer between ${min} and ${max}`);
+  }
+  return value;
+}
+
 export function encode(payload, options = {}) {
   const layerName = resolveLayerName(options.layer ?? 'G10');
   const layer = LAYERS[layerName];
   if (!layer) throw new Error(`LCC: unknown layer ${layerName}`);
 
   const isShapeLayer = !!layer.shapeSetSize;
-  if (isShapeLayer && (options.seed ?? 0) !== 0) {
+  const requestedSeed = intOption(options.seed, 'seed', 0, 63) ?? 0;
+  if (isShapeLayer && requestedSeed !== 0) {
     throw new Error(
       'LCC: shape layers reserve the format seed field for the shape variant; options.seed must be 0',
     );
   }
   const paletteMode = isShapeLayer ? 'maxmin' : (options.paletteMode ?? 'maxmin');
+  if (paletteMode !== 'maxmin' && paletteMode !== 'harmony') {
+    throw new Error('LCC: paletteMode must be maxmin or harmony');
+  }
   const harmony = isShapeLayer ? false : (options.harmony ?? false);
   let constraint = options.constraint ?? layer.defaultConstraint;
   if (layerName === 'G10' || isShapeLayer) constraint = false;
 
   const mode = options.mode ?? 'fill';
-  const width = options.width ?? 1024;
-  const height = options.height ?? 1024;
-  const quietZone = options.quietZone ?? QUIET_ZONE.screen;
-  const minModulePx = Math.max(options.minModulePx ?? MIN_MODULE_PX, layer.minModulePx ?? 0);
-  const maxModulePx = options.maxModulePx ?? MAX_MODULE_PX;
+  if (mode !== 'fill' && mode !== 'compact') throw new Error('LCC: mode must be fill or compact');
+  const width = intOption(options.width, 'width', 1, 32768) ?? 1024;
+  const height = intOption(options.height, 'height', 1, 32768) ?? 1024;
+  const quietZone = intOption(options.quietZone, 'quietZone', 0, 64) ?? QUIET_ZONE.screen;
+  const optionMinModule = intOption(options.minModulePx, 'minModulePx', 1, MAX_MODULE_PX);
+  const optionMaxModule = intOption(options.maxModulePx, 'maxModulePx', 1, MAX_MODULE_PX);
+  const minModulePx = Math.max(optionMinModule ?? MIN_MODULE_PX, layer.minModulePx ?? 0);
+  const maxModulePx = optionMaxModule ?? MAX_MODULE_PX;
+  if (minModulePx > maxModulePx) throw new Error('LCC: minModulePx must be <= maxModulePx');
   const baseEcc = resolveEcc(options.eccLevel, layer);
   const boostEcc = options.boostEcc ?? false;
-  const moduleSize = options.moduleSize ?? null;
+  const moduleSize = options.moduleSize === undefined
+    ? null
+    : intOption(options.moduleSize, 'moduleSize', 1, MAX_MODULE_PX);
 
   const payloadBytes = typeof payload === 'string'
     ? new TextEncoder().encode(payload)
@@ -269,18 +287,18 @@ export function encode(payload, options = {}) {
   const richFormat = isShapeLayer || layer.kind === 'color' || constraint
     || (options.seed ?? 0) !== 0 || paletteMode !== 'maxmin' || harmony;
   const minVersion = Math.max(
-    options.minVersion ?? 1,
+    intOption(options.minVersion, 'minVersion', 1, 100) ?? 1,
     richFormat ? 2 : 1,
     layer.minVersion ?? 1,
   );
-  const maxVersion = options.maxVersion ?? 100;
+  const maxVersion = intOption(options.maxVersion, 'maxVersion', 1, 100) ?? 100;
   if (minVersion < 1 || maxVersion > 100 || maxVersion < minVersion) {
     throw new Error('LCC: invalid version range');
   }
 
   let chosen;
-  if (options.version) {
-    const version = options.version;
+  if (options.version !== undefined) {
+    const version = intOption(options.version, 'version', 1, 100);
     if (version < minVersion || version > maxVersion) {
       throw new Error(`LCC: version must be between ${minVersion} and ${maxVersion}`);
     }
@@ -314,7 +332,7 @@ export function encode(payload, options = {}) {
   const { version, layout, cap, moduleSize: chosenModuleSize, ecc } = chosen;
   const formatBlocks = layout.format.blocksPerCopy;
 
-  let seed = options.seed ?? 0;
+  let seed = requestedSeed;
   if (isShapeLayer) {
     // The format seed field carries the shape-layer variant.  Shape layers
     // always use a fixed whitening seed so existing variant-0 codes are
@@ -381,6 +399,9 @@ export function encode(payload, options = {}) {
   });
   writeFormatBand(symbols, layout, chunks);
 
+  if ((layout.N + 2 * quietZone) * chosenModuleSize > 32768) {
+    throw new Error('LCC: rendered image exceeds the 32768 px limit');
+  }
   const image = render(
     symbols,
     layout,

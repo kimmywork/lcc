@@ -8,8 +8,8 @@
  */
 
 import { versionToSize } from './constants.js';
-import { FINDER_PATTERN, sampleImage } from './image-utils.js';
-import { preprocessVariants } from './preprocess.js';
+import { FINDER_PATTERN, sampleImage, validateImage } from './image-utils.js';
+import { createPreprocessor } from './preprocess.js';
 
 function solveReal(A, b) {
   const n = b.length;
@@ -286,9 +286,10 @@ function assignCorners(list, tl, tr, bl) {
 }
 
 export function detectPerspective(image, options = {}) {
+  validateImage(image);
   const debug = options.debug ?? false;
   const { width, height } = image;
-  const variant = options.variant ?? preprocessVariants(image)[0];
+  const variant = options.variant ?? createPreprocessor(image).get('otsu');
   const { mask, thresholdAt } = variant;
   const candidates = ringComponents(mask, width, height).slice(0, 10);
   if (debug) console.log('[perspective] candidates', candidates.map((c) => ({ x: +c.x.toFixed(1), y: +c.y.toFixed(1), s: +c.s.toFixed(2) })));
@@ -334,8 +335,10 @@ export function detectPerspective(image, options = {}) {
       if (debug) console.log('[perspective] triple', { tl: [tl.x, tl.y], tr: [tr.x, tr.y], bl: [bl.x, bl.y], n1, n2, versionEst });
       for (let v = Math.max(1, versionEst - 3); v <= Math.min(100, versionEst + 3); v++) {
         const N = versionToSize(v);
-        let H = null;
-        let alignment = null;
+        const canonicalFinders = [[3.5, 3.5], [N - 3.5, 3.5], [3.5, N - 3.5], [N - 3.5, N - 3.5]];
+        const canonicalCorners = [[0, 0], [N, 0], [0, N], [N, N]];
+        const hypotheses = [];
+
         if (N >= 25) {
           const expectedBR = { x: tr.x + bl.x - tl.x, y: tr.y + bl.y - tl.y };
           const maxD = 0.35 * Math.max(distance(tl, tr), distance(tl, bl));
@@ -353,67 +356,76 @@ export function detectPerspective(image, options = {}) {
             }
           }
           if (bestAlign) {
-            alignment = bestAlign;
-            const canonical = [[3.5, 3.5], [N - 3.5, 3.5], [3.5, N - 3.5], [N - 3.5, N - 3.5]];
-            const dst = [[tl.x, tl.y], [tr.x, tr.y], [bl.x, bl.y], [bestAlign.x, bestAlign.y]];
-            H = computeHomography(canonical, dst);
+            const H = computeHomography(canonicalFinders, [
+              [tl.x, tl.y], [tr.x, tr.y], [bl.x, bl.y], [bestAlign.x, bestAlign.y],
+            ]);
+            if (H) hypotheses.push({ H, alignment: bestAlign, kind: 'align' });
           }
+
+          // Parallelogram hypothesis: exact for rotation/scale/translation and
+          // a good initialisation under mild perspective.  It does not depend
+          // on a possibly missing alignment ring.
+          const H = computeHomography(canonicalFinders, [
+            [tl.x, tl.y], [tr.x, tr.y], [bl.x, bl.y], [expectedBR.x, expectedBR.y],
+          ]);
+          if (H) hypotheses.push({ H, alignment: null, kind: 'para' });
         }
-        if (!H) {
-          const assigned = assignCorners(cornerList, tl, tr, bl);
-          if (!assigned) continue;
-          const canonical = [[0, 0], [N, 0], [0, N], [N, N]];
-          const dst = [assigned.tl, assigned.tr, assigned.bl, assigned.br];
-          H = computeHomography(canonical, dst);
+
+        const assigned = assignCorners(cornerList, tl, tr, bl);
+        if (assigned) {
+          const H = computeHomography(canonicalCorners, [
+            assigned.tl, assigned.tr, assigned.bl, assigned.br,
+          ]);
+          if (H) hypotheses.push({ H, alignment: null, kind: 'corners' });
         }
-        if (!H) continue;
-        const scoreTL = finderScore(H, image, thresholdAt, 0, 0);
-        const scoreTR = finderScore(H, image, thresholdAt, 0, N - 7);
-        const scoreBL = finderScore(H, image, thresholdAt, N - 7, 0);
-        let scoreA = 1;
-        if (alignment) {
-          scoreA = alignmentScore(H, image, thresholdAt, N);
-          if (scoreA < 0.65) continue;
-        }
-        const minScore = Math.min(scoreTL, scoreTR, scoreBL, scoreA);
-        const scoreT = timingScore(H, image, thresholdAt, N);
-        if (debug) console.log('[perspective] v', v, 'N', N, 'scores', scoreTL.toFixed(3), scoreTR.toFixed(3), scoreBL.toFixed(3), 'align', scoreA.toFixed(3), 'timing', scoreT.toFixed(3), 'min', minScore.toFixed(3));
-        if (minScore < 0.65) continue;
-        const consistency = 1 - Math.min(1, Math.abs(n1 - n2) / N);
-        const total = minScore + 0.5 * scoreT + 0.1 * consistency;
-        if (!best || total > best.score) {
-          best = {
-            version: v,
-            N,
-            s: (tl.s + tr.s + bl.s) / 3,
-            threshold: thresholdAt(width / 2, height / 2),
-            thresholdAt,
-            thresholdAtRowCol: (row, col) => {
-              const [x, y] = applyHomography(H, col + 0.5, row + 0.5);
-              return thresholdAt(x, y);
-            },
-            pointAt: (row, col) => applyHomography(H, col + 0.5, row + 0.5),
-            homography: H,
-            finders: { tl, tr, bl },
-            score: total,
-            finderScores: { tl: scoreTL, tr: scoreTR, bl: scoreBL },
-            timingScore: scoreT,
-            alignmentScore: scoreA,
-            sampler: (row, col) => {
-              // Sample a 3x3 sub-grid in canonical module coordinates and
-              // take the per-channel median.  A square average in image
-              // space can cross module boundaries under perspective.
-              const samples = [];
-              for (const dv of [-0.2, 0, 0.2]) {
-                for (const du of [-0.2, 0, 0.2]) {
-                  const [x, y] = applyHomography(H, col + 0.5 + du, row + 0.5 + dv);
-                  samples.push(sampleImage(image, x, y, 0));
+
+        for (const hypothesis of hypotheses) {
+          const { H, alignment } = hypothesis;
+          const scoreTL = finderScore(H, image, thresholdAt, 0, 0);
+          const scoreTR = finderScore(H, image, thresholdAt, 0, N - 7);
+          const scoreBL = finderScore(H, image, thresholdAt, N - 7, 0);
+          let scoreA = 1;
+          if (alignment) {
+            scoreA = alignmentScore(H, image, thresholdAt, N);
+            if (scoreA < 0.65) continue;
+          }
+          const minScore = Math.min(scoreTL, scoreTR, scoreBL, scoreA);
+          const scoreT = timingScore(H, image, thresholdAt, N);
+          if (debug) console.log('[perspective] v', v, 'N', N, 'scores', scoreTL.toFixed(3), scoreTR.toFixed(3), scoreBL.toFixed(3), 'align', scoreA.toFixed(3), 'timing', scoreT.toFixed(3), 'min', minScore.toFixed(3), 'kind', hypothesis.kind, 'alignPt', alignment ? [alignment.x.toFixed(1), alignment.y.toFixed(1)] : null);
+          if (minScore < 0.65) continue;
+          const consistency = 1 - Math.min(1, Math.abs(n1 - n2) / N);
+          const total = minScore + 0.5 * scoreT + 0.1 * consistency;
+          if (!best || total > best.score) {
+            best = {
+              version: v,
+              N,
+              s: (tl.s + tr.s + bl.s) / 3,
+              threshold: thresholdAt(width / 2, height / 2),
+              thresholdAt,
+              thresholdAtRowCol: (row, col) => {
+                const [x, y] = applyHomography(H, col + 0.5, row + 0.5);
+                return thresholdAt(x, y);
+              },
+              pointAt: (row, col) => applyHomography(H, col + 0.5, row + 0.5),
+              homography: H,
+              finders: { tl, tr, bl },
+              score: total,
+              finderScores: { tl: scoreTL, tr: scoreTR, bl: scoreBL },
+              timingScore: scoreT,
+              alignmentScore: scoreA,
+              sampler: (row, col) => {
+                const samples = [];
+                for (const dv of [-0.2, 0, 0.2]) {
+                  for (const du of [-0.2, 0, 0.2]) {
+                    const [x, y] = applyHomography(H, col + 0.5 + du, row + 0.5 + dv);
+                    samples.push(sampleImage(image, x, y, 0));
+                  }
                 }
-              }
-              const med = (k) => samples.map((s) => s[k]).sort((a, b) => a - b)[4];
-              return [med(0), med(1), med(2)];
-            },
-          };
+                const med = (k) => samples.map((s) => s[k]).sort((a, b) => a - b)[4];
+                return [med(0), med(1), med(2)];
+              },
+            };
+          }
         }
       }
     }
