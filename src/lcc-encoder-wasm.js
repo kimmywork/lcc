@@ -6,13 +6,22 @@
  * during module evaluation (top-level await).
  */
 
-import { instantiateWasmBytes, loadWasmBytes } from './wasm-common.js';
+import {
+  compileWasmAsync,
+  compileWasmBytes,
+  instantiateWasmModule,
+  isNode,
+  loadWasmBytes,
+  wasmSimdSupported,
+} from './wasm-common.js';
 
-const wasmBytes = await loadWasmBytes('lcc-encoder.wasm');
-let wasm = instantiateWasmBytes(wasmBytes);
+const wasmFile = wasmSimdSupported() ? 'lcc-encoder.wasm' : 'lcc-encoder-baseline.wasm';
+const wasmBytes = await loadWasmBytes(wasmFile);
+const wasmModule = isNode ? compileWasmBytes(wasmBytes) : await compileWasmAsync(wasmBytes);
+let wasm = instantiateWasmModule(wasmModule);
 
 export function resetEncoderWasm() {
-  wasm = instantiateWasmBytes(wasmBytes);
+  wasm = instantiateWasmModule(wasmModule);
 }
 
 function packRequest(payload, options = {}) {

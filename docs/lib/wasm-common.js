@@ -6,7 +6,20 @@
  * asynchronously; top-level await in the callers makes that transparent.
  */
 
-const isNode = typeof process !== 'undefined' && !!process.versions?.node;
+export const isNode = typeof process !== 'undefined' && !!process.versions?.node;
+
+
+/** Feature-detect WebAssembly SIMD so older mobile browsers get a baseline build. */
+export function wasmSimdSupported() {
+  try {
+    return WebAssembly.validate(new Uint8Array([
+      0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0,
+      10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11,
+    ]));
+  } catch {
+    return false;
+  }
+}
 
 function wasiImports() {
   let memory = null;
@@ -78,14 +91,7 @@ export async function loadWasmBytes(filename) {
   throw new Error(`LCC wasm fetch failed: ${filename} (${lastStatus})`);
 }
 
-export function instantiateWasmBytes(bytes) {
-  const imports = wasiImports();
-  const module = new WebAssembly.Module(bytes);
-  const instance = new WebAssembly.Instance(module, {
-    wasi_snapshot_preview1: imports.wasi_snapshot_preview1,
-  });
-  const exports = instance.exports;
-  imports.bind(exports.memory);
+function wrapExports(exports) {
   return {
     exports,
     write(bytesIn) {
@@ -108,4 +114,25 @@ export function instantiateWasmBytes(bytes) {
       };
     },
   };
+}
+
+export function compileWasmBytes(bytes) {
+  return new WebAssembly.Module(bytes);
+}
+
+export async function compileWasmAsync(bytes) {
+  return WebAssembly.compile(bytes);
+}
+
+export function instantiateWasmModule(module) {
+  const imports = wasiImports();
+  const instance = new WebAssembly.Instance(module, {
+    wasi_snapshot_preview1: imports.wasi_snapshot_preview1,
+  });
+  imports.bind(instance.exports.memory);
+  return wrapExports(instance.exports);
+}
+
+export function instantiateWasmBytes(bytes) {
+  return instantiateWasmModule(compileWasmBytes(bytes));
 }

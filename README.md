@@ -126,7 +126,7 @@ npm run demo                 # 生成下面 5 个基础文本示例
 npm run shape:examples       # 生成前 4 个文本的形状层示例
 npm run shape32:examples     # 生成 32 符号层示例（G15/G25/G35/C25/C55/C65/C85）
 npm test                     # 测试
-npm run build:wasm           # 编译两个 C 核心：docs/lib/lcc-decoder.wasm + lcc-encoder.wasm（有 emcc 用 Emscripten，否则用 zig）
+npm run build:wasm           # 编译 C 核心：SIMD + baseline 两套 decoder/encoder wasm（有 emcc 用 Emscripten，否则用 zig）
 npm run build:web            # 复制浏览器核心到 docs/lib（保留 wasm）
 npm run web                  # http://localhost:8080
 ```
@@ -359,7 +359,7 @@ Web 版在 `docs/`：
 ## 项目结构
 
 ```
-native/            C 核心；分别编译为 docs/lib/lcc-encoder.wasm 与 docs/lib/lcc-decoder.wasm
+native/            C 核心；编译为 docs/lib/lcc-{decoder,encoder}.wasm，以及不支持 SIMD 的 *-baseline.wasm
 src/
   encoder.js         encoder.wasm 的薄封装
   decoder.js         decoder.wasm 的薄封装

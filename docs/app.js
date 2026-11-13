@@ -7,6 +7,7 @@ import {
   LAYERS,
 } from './lib/index.js';
 import { decodeAutoWasm, scanFramesWasm, stackCanonicalFramesWasm } from './lib/lcc-wasm.js';
+import { wasmSimdSupported } from './lib/wasm-common.js';
 
 const $ = (id) => document.getElementById(id);
 const textEl = $('text');
@@ -511,7 +512,7 @@ async function waitForVideoReady(element) {
     const timer = setTimeout(() => {
       cleanup();
       reject(new Error('摄像头画面尚未就绪'));
-    }, 5000);
+    }, 8000);
     const check = () => {
       if (element.videoWidth && element.readyState >= 2) {
         cleanup();
@@ -544,10 +545,14 @@ async function startCamera() {
       throw new Error('当前浏览器不支持摄像头 API；请使用 iOS 14.3+ 的 Safari 或最新版 Chrome。');
     }
     cameraStream = await getCameraStream();
-    video.srcObject = cameraStream;
+    // iOS Safari needs these attributes before srcObject/play(), otherwise
+    // playback can stay suspended or open fullscreen.
     video.muted = true;
+    video.setAttribute('muted', '');
     video.setAttribute('playsinline', '');
     video.setAttribute('webkit-playsinline', '');
+    video.playsInline = true;
+    video.srcObject = cameraStream;
     await video.play();
     await waitForVideoReady(video);
     $('cameraHint').style.display = 'none';
@@ -570,6 +575,8 @@ async function startCamera() {
       `secure=${window.isSecureContext}`,
       `protocol=${location.protocol}`,
       `mediaDevices=${!!navigator.mediaDevices}`,
+      `wasm=${typeof WebAssembly !== 'undefined'}`,
+      `simd=${wasmSimdSupported()}`,
       `error=${e?.name ?? 'Error'}`,
     ].join(' · ');
     setStatus(`无法打开摄像头：${cameraErrorMessage(e)}（${diagnostic}）`, 'err');
