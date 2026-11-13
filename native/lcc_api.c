@@ -317,6 +317,120 @@ int lcc_api_decode(const uint8_t *rgb, size_t rgb_len, int width, int height, in
   return status;
 }
 
+static int publish_detect_status(int status) {
+  uint8_t *out = lcc_alloc(160);
+  if (!out) {
+    set_last(NULL, 0);
+    return status;
+  }
+  memset(out, 0, 160);
+  wr_u32(out, (uint32_t)status);
+  set_last(out, 160);
+  return status;
+}
+
+int lcc_api_detect(const uint8_t *input, int input_len) {
+  const int header = 48;
+  if (!input || input_len < header) return publish_detect_status(LCC_BAD_INPUT);
+  const int width = rd_i32(input + 0);
+  const int height = rd_i32(input + 4);
+  const int perspective = rd_i32(input + 8);
+  const int rgb_len = rd_i32(input + 12);
+  size_t bytes = 0;
+  if (!lcc_image_geometry(width, height, &bytes) || rgb_len < 0 ||
+      (size_t)rgb_len != bytes || (size_t)header + (size_t)rgb_len > (size_t)input_len) {
+    return publish_detect_status(LCC_BAD_INPUT);
+  }
+  char variant[32];
+  memcpy(variant, input + 16, 32);
+  variant[31] = '\0';
+  LccImage image = { width, height, input + header };
+  LccFound found;
+  const int status = lcc_detect_geometry(&image, perspective ? 1 : 0, variant, &found);
+  if (status != LCC_OK) return publish_detect_status(status);
+  uint8_t *out = lcc_alloc(160);
+  if (!out) {
+    set_last(NULL, 0);
+    return LCC_ERR;
+  }
+  memset(out, 0, 160);
+  wr_u32(out + 0, LCC_OK);
+  wr_u32(out + 4, 1);
+  wr_u32(out + 8, (uint32_t)found.version);
+  wr_u32(out + 12, (uint32_t)found.N);
+  wr_f64(out + 16, found.s);
+  wr_f64(out + 24, found.origin_x);
+  wr_f64(out + 32, found.origin_y);
+  wr_f64(out + 40, found.score);
+  wr_f64(out + 48, found.threshold);
+  wr_u32(out + 56, (uint32_t)found.axis);
+  wr_u32(out + 60, (uint32_t)found.has_h);
+  for (int i = 0; i < 9; i++) wr_f64(out + 64 + i * 8, found.H[i]);
+  set_last(out, 160);
+  return LCC_OK;
+}
+
+int lcc_api_decode_explicit(
+  const uint8_t *rgb,
+  size_t rgb_len,
+  int width,
+  int height,
+  double origin_x,
+  double origin_y,
+  double module_size,
+  int version,
+  double threshold
+) {
+  size_t bytes = 0;
+  if (!rgb || !lcc_image_geometry(width, height, &bytes) || rgb_len < bytes ||
+      version < 1 || version > 100 || !isfinite(origin_x) || !isfinite(origin_y) ||
+      !isfinite(module_size) || module_size <= 0 || !isfinite(threshold)) {
+    return publish_decode_status(LCC_BAD_INPUT);
+  }
+  LccImage image = { width, height, rgb };
+  uint8_t *payload = NULL;
+  int payload_len = 0;
+  LccDecodeMeta meta;
+  memset(&meta, 0, sizeof(meta));
+  const int status = lcc_decode_explicit(
+    &image, origin_x, origin_y, module_size, version, threshold,
+    &payload, &payload_len, &meta
+  );
+  const int header = 120;
+  uint8_t *out = lcc_alloc((size_t)header + (status == LCC_OK ? (size_t)payload_len : 0));
+  if (!out) {
+    lcc_release(payload);
+    return publish_decode_status(LCC_ERR);
+  }
+  memset(out, 0, header);
+  wr_u32(out + 0, (uint32_t)status);
+  wr_u32(out + 4, (uint32_t)meta.version);
+  wr_u32(out + 8, (uint32_t)meta.N);
+  wr_f64(out + 12, meta.module_size);
+  wr_f64(out + 20, meta.ecc);
+  wr_u32(out + 28, (uint32_t)meta.corrected);
+  wr_u32(out + 32, (uint32_t)meta.palette_size);
+  wr_f64(out + 36, meta.min_delta_e);
+  wr_u32(out + 44, (uint32_t)meta.constraint);
+  wr_u32(out + 48, (uint32_t)meta.harmony);
+  wr_u32(out + 52, (uint32_t)meta.seed);
+  wr_u32(out + 56, (uint32_t)meta.shape_set);
+  wr_f64(out + 60, meta.bits_per_module);
+  wr_u32(out + 68, (uint32_t)meta.format_blocks);
+  wr_u32(out + 72, (uint32_t)meta.data_count);
+  wr_u32(out + 76, (uint32_t)meta.rs_symbols);
+  wr_u32(out + 80, (uint32_t)meta.rank_count);
+  wr_u32(out + 84, (uint32_t)meta.max_rank_diff);
+  wr_u32(out + 88, (uint32_t)meta.calibration);
+  wr_u32(out + 92, status == LCC_OK ? (uint32_t)payload_len : 0);
+  memcpy(out + 96, meta.layer, 8);
+  memcpy(out + 104, meta.palette_mode, 16);
+  if (status == LCC_OK && payload_len) memcpy(out + header, payload, (size_t)payload_len);
+  lcc_release(payload);
+  set_last(out, header + (status == LCC_OK ? payload_len : 0));
+  return status;
+}
+
 int lcc_api_scan(const uint8_t *input, int input_len) {
   if (!input || input_len < 4) return publish_decode_status(LCC_BAD_INPUT);
   int offset = 0;

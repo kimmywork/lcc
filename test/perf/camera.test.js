@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { encode } from '../../src/index.js';
-import { decodeAutoWasm } from '../../docs/lib/lcc-wasm.js';
+import { decodeAutoWasm } from '../../src/lcc-wasm.js';
 import { degrade } from '../../scripts/lib/degrade.mjs';
 import { mulberry32 } from '../../scripts/lib/rng.mjs';
 

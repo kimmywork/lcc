@@ -15,7 +15,7 @@
 import { performance } from 'node:perf_hooks';
 
 import { encode } from '../src/index.js';
-import { decodeAutoWasm, forceNextWasmTrap, wasmExports, wasmMemoryStats } from '../docs/lib/lcc-wasm.js';
+import { decodeAutoWasm, forceNextWasmTrap, wasmExports, wasmMemoryStats } from '../src/lcc-wasm.js';
 
 const wasm = await wasmExports();
 

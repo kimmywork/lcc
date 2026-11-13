@@ -33,6 +33,11 @@ SOURCES="
   native/lcc_ecc.c
   native/lcc_stack.c
   native/lcc_layout.c
+  native/lcc_encode_constraint.c
+  native/lcc_encode_layers.c
+  native/lcc_encode_layout.c
+  native/lcc_encode_shapes.c
+  native/lcc_encoder.c
   native/lcc_preprocess.c
   native/lcc_detect.c
   native/lcc_decode.c
@@ -51,6 +56,7 @@ export UBSAN_OPTIONS="${UBSAN_OPTIONS:-halt_on_error=1:print_stacktrace=1}"
 
 echo "safe fuzz: iterations=$ITER seed=$SEED"
 "$BUILD/lcc_fuzz" safe "$ITER" "$SEED"
+"$BUILD/lcc_fuzz" encode "$ITER" "$SEED"
 
 AUDIT_FAIL=0
 if [ "$1" = "--audit" ]; then

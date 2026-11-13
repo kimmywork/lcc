@@ -1,4 +1,5 @@
 #include "lcc_internal.h"
+#include "lcc_encode_internal.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -1377,7 +1378,6 @@ static int decode_found(
     return LCC_ERR;
   }
   lcc_layout_free(&probe);
-  if (fmt.constraint) return LCC_UNSUPPORTED;
   const char *name = layer_name_of(&fmt);
   if (!name) return LCC_ERR;
   const LccPaletteInfo *palette = lcc_palette(name, fmt.harmony);
@@ -1582,15 +1582,35 @@ static int decode_found(
   lcc_release(band);
   lcc_release(order);
 
-  BitWriter writer = { 0 };
-  const int bits_per = palette->bits;
-  for (int i = 0; i < D; i++) {
-    if (strcmp(palette->name, "G10") == 0) bw_bit(&writer, symbols[i] & 1);
-    else bw_bits(&writer, symbols[i], bits_per);
-  }
+  int bits_per = palette->bits;
   int nbytes = 0;
-  uint8_t *packed = bw_finish(&writer, &nbytes);
-  const int capacity_bits = strcmp(palette->name, "G10") == 0 ? D : D * bits_per;
+  uint8_t *packed = NULL;
+  int capacity_bits = 0;
+  if (fmt.constraint) {
+    LccRankConstraint *rc = lcc_rank_constraint_build(palette);
+    int16_t *rank_symbols = lcc_alloc((size_t)D * sizeof(int16_t));
+    for (int i = 0; i < D && rank_symbols; i++) rank_symbols[i] = (int16_t)symbols[i];
+    if (!rc || !rank_symbols ||
+        !lcc_rank_constraint_decode(rc, rank_symbols, D, &packed, &capacity_bits)) {
+      lcc_rank_constraint_free(rc);
+      lcc_release(rank_symbols);
+      lcc_release(symbols);
+      lcc_layout_free(&layout);
+      return LCC_ERR;
+    }
+    lcc_rank_constraint_free(rc);
+    lcc_release(rank_symbols);
+    nbytes = (capacity_bits + 7) / 8;
+    bits_per = D > 0 ? capacity_bits / D : 0;
+  } else {
+    BitWriter writer = { 0 };
+    for (int i = 0; i < D; i++) {
+      if (strcmp(palette->name, "G10") == 0) bw_bit(&writer, symbols[i] & 1);
+      else bw_bits(&writer, symbols[i], bits_per);
+    }
+    packed = bw_finish(&writer, &nbytes);
+    capacity_bits = strcmp(palette->name, "G10") == 0 ? D : D * bits_per;
+  }
   const int S = capacity_bits / 8;
   if (S <= 0 || nbytes < S) {
     free(packed);
@@ -1629,11 +1649,11 @@ static int decode_found(
   meta->corrected = corrected;
   meta->palette_size = palette->palette_size;
   meta->min_delta_e = palette->min_delta_e;
-  meta->constraint = 0;
+  meta->constraint = fmt.constraint ? 1 : 0;
   meta->harmony = fmt.harmony;
   meta->seed = fmt.mode_id == 7 ? 0 : fmt.seed;
   meta->shape_set = palette->shape_set > 0 ? palette->shape_set : 1;
-  meta->bits_per_module = bits_per;
+  meta->bits_per_module = fmt.constraint && D > 0 ? (double)capacity_bits / (double)D : (double)bits_per;
   meta->format_blocks = layout.blocks;
   meta->data_count = D;
   meta->rs_symbols = S;
@@ -1875,6 +1895,69 @@ static int scan_frames_impl(
   lcc_release(dets);
   lcc_release(variants);
   return status;
+}
+
+int lcc_detect_geometry(const LccImage *image, int perspective, const char *variant_name, LccFound *found) {
+  size_t bytes = 0;
+  if (!image || !image->data || !found ||
+      !lcc_image_geometry(image->width, image->height, &bytes)) {
+    return LCC_BAD_INPUT;
+  }
+  LccPrep prep;
+  if (!lcc_prep_init(&prep, image)) return LCC_ERR;
+  LccVariant variant;
+  const char *name = variant_name && variant_name[0] ? variant_name : "otsu";
+  if (!lcc_variant_build(&prep, name, &variant)) {
+    lcc_prep_free(&prep);
+    return LCC_ERR;
+  }
+  memset(found, 0, sizeof(*found));
+  const int ok = perspective
+    ? lcc_detect_perspective(image, &variant, found)
+    : lcc_detect_axis(image, &variant, found);
+  if (ok) {
+    found->threshold = lcc_threshold_at(&variant, image->width / 2.0, image->height / 2.0);
+  }
+  lcc_variant_free(&variant);
+  lcc_prep_free(&prep);
+  return ok ? LCC_OK : LCC_ERR;
+}
+
+int lcc_decode_explicit(
+  const LccImage *image,
+  double origin_x,
+  double origin_y,
+  double module_size,
+  int version,
+  double threshold,
+  uint8_t **payload,
+  int *payload_len,
+  LccDecodeMeta *meta
+) {
+  size_t bytes = 0;
+  if (!image || !image->data || !lcc_image_geometry(image->width, image->height, &bytes) ||
+      version < 1 || version > 100 || !isfinite(origin_x) || !isfinite(origin_y) ||
+      !isfinite(module_size) || module_size <= 0 || !isfinite(threshold)) {
+    return LCC_BAD_INPUT;
+  }
+  LccVariant variant;
+  memset(&variant, 0, sizeof(variant));
+  variant.width = image->width;
+  variant.height = image->height;
+  variant.otsu = threshold;
+  variant.constant = 1;
+
+  LccFound found;
+  memset(&found, 0, sizeof(found));
+  found.version = version;
+  found.N = 21 + 4 * (version - 1);
+  found.s = module_size;
+  found.score = 1;
+  found.origin_x = origin_x;
+  found.origin_y = origin_y;
+  found.threshold = threshold;
+  found.axis = 1;
+  return decode_found(image, &variant, &found, payload, payload_len, meta);
 }
 
 int lcc_decode_image(const LccImage *image, int mode, uint8_t **payload, int *payload_len, LccDecodeMeta *meta) {

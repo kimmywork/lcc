@@ -9,8 +9,25 @@ import path from 'node:path';
 const root = path.resolve('.');
 const src = path.join(root, 'src');
 const out = path.join(root, 'docs', 'lib');
-const skip = new Set(['png.js', 'node-io.js', 'cli.js']);
-const keepNames = ['lcc.wasm', 'lcc-wasm.js'];
+// Keep the browser bundle free of the JavaScript reference codec pipeline.
+// The public browser entry points only use the two wasm artifacts plus the
+// small detection/stack/SVG helpers.
+const skip = new Set([
+  'png.js',
+  'node-io.js',
+  'cli.js',
+  'bitstream.js',
+  'constraint.js',
+  'frame.js',
+  'layout.js',
+  'palettes.js',
+  'whitening.js',
+  'local-rank.js',
+  'illumination.js',
+  'ecc',
+  'format',
+]);
+const keepNames = ['lcc-decoder.wasm', 'lcc-encoder.wasm'];
 const kept = new Map();
 for (const name of keepNames) {
   const file = path.join(out, name);

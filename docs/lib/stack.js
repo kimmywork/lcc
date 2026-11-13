@@ -16,6 +16,17 @@ function groupKey(det) {
 
 function pointAtOf(det) {
   if (typeof det.pointAt === 'function') return det.pointAt;
+  if (Array.isArray(det.homography) && det.homography.length === 9) {
+    const [a, b, c, d, e, f, g, h, i] = det.homography;
+    return (row, col) => {
+      // The wasm homography maps module centres (index + 0.5); this helper
+      // receives module-relative coordinates with a -0.5 offset.
+      const x = col + 1;
+      const y = row + 1;
+      const den = g * x + h * y + i;
+      return [(a * x + b * y + c) / den, (d * x + e * y + f) / den];
+    };
+  }
   return (row, col) => [
     det.originX + (col + 0.5) * det.s,
     det.originY + (row + 0.5) * det.s,

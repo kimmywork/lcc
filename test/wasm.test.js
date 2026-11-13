@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { decodeAuto, detectSymbol } from '../src/decoder.js';
 import { encode } from '../src/encoder.js';
 import { stackCanonicalFrames } from '../src/stack.js';
-import { decodeAutoWasm, stackCanonicalFramesWasm } from '../docs/lib/lcc-wasm.js';
+import { decodeAutoWasm, stackCanonicalFramesWasm } from '../src/lcc-wasm.js';
 
 function rng(seed) {
   let s = seed >>> 0;
@@ -95,11 +95,13 @@ test('wasm decode matches JS on clean, cast, and stacked images', async () => {
   assert.equal(perspective.text, 'cast');
 });
 
-test('wasm leaves constraint codes to the JS decoder', async () => {
+test('wasm decodes reversible constraint codes', async () => {
   const image = encode('constrained', {
     layer: 'G30', width: 512, height: 512, mode: 'fill', constraint: true, maxModulePx: 32,
   }).image;
-  assert.equal(await decodeAutoWasm(image, { detector: 'axis' }), null);
+  const wasm = await decodeAutoWasm(image, { detector: 'axis' });
+  assert.equal(wasm.text, 'constrained');
+  assert.equal(wasm.meta.constraint, true);
   assert.equal(decodeAuto(image, { detector: 'axis' }).text, 'constrained');
 });
 

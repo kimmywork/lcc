@@ -125,7 +125,7 @@ function decodeMetaText(result) {
   return [
     `layer ${m.layer} · v${m.version} / N=${m.N} · module ${Number.isFinite(m.moduleSize) ? Number(m.moduleSize).toFixed(2) : 'n/a'}px`,
     `palette ${m.paletteMode} · constraint ${m.constraint ? 'on' : 'off'} · seed ${m.seed} · calibration ${m.calibration}`,
-    `RS symbols ${m.rsSymbols} · corrected ${m.correctedSymbols} · detection score ${d.score ? Number(d.score).toFixed(2) : 'n/a'}`,
+    `RS symbols ${m.rsSymbols} · corrected ${m.correctedSymbols} · detection ${m.detectionPath ?? 'direct'} · score ${d.score ? Number(d.score).toFixed(2) : 'n/a'}`,
   ].join('\n');
 }
 
@@ -338,15 +338,28 @@ async function decodeRGB(image, options = {}) {
   await new Promise((resolve) => setTimeout(resolve, 20));
   try {
     let result = options.result ?? null;
+    // Single uploads: detect the symbol geometry first, warp one canonical
+    // frame, then decode that.  This is the same path as the multi-frame
+    // scanner, so the UI no longer sends a raw full image straight to decode.
+    if (!result && !options.detector && !options.stackInfo) {
+      try {
+        result = await scanFramesWasm([image]);
+        if (result) result.meta.detectionPath = 'detect+canonical';
+      } catch {
+        result = null;
+      }
+    }
     if (!result) {
       try {
         result = await decodeAutoWasm(image, options.detector ? { detector: options.detector } : {});
+        if (result) result.meta.detectionPath = 'direct';
       } catch {
         result = null;
       }
     }
     if (!result) {
       result = decodeAuto(image, options.detector ? { detector: options.detector } : {});
+      result.meta.detectionPath = 'direct';
     }
     if (options.stackInfo) {
       result.meta.stackFrames = options.stackInfo.frames;

@@ -58,7 +58,9 @@ native/fuzz_harness.c
 
 ## 2. 性能
 
-> 由于 JS 解码实现后续会被 C/WASM 替换，C/WASM 是主指标；JS 数字仅作为回退路径参考。**当前 C 核心只实现 decode/scan/stack，编码仍是 JS**；若生产编码也要迁到 C，需要新增 C encoder 并单独做 fuzz/benchmark。
+> 由于 JS 解码实现后续会被 C/WASM 替换，C/WASM 是主指标；JS 数字仅作为回退路径参考。
+>
+> **2026-11-13 后续**：编码也已迁到 C，构建为独立的 `lcc-encoder.wasm`；扫描/解码仍是 `lcc-decoder.wasm`。本报告中的「JS 编码」数字对应迁移前的基线，迁移后的编码性能需要重新采样。
 
 ### 2.1 编码
 
@@ -148,7 +150,7 @@ native/fuzz_harness.c
 
 2. **把 WASM 作为默认解码路径（已可用，收益 6–20×）**
    - `decodeAutoWasm` 在 C40 上 13.6 ms，已优于 jsQR（20–45 ms）。
-   - 注意：WASM 不处理 constraint 层（返回 `null`），需要 JS 兜底；`decodeAutoWasm` 失败/`null` 时再走 JS。
+   - 2026-11-13 起 C 解码器支持 constraint 层，`decodeAutoWasm` 不再对 constraint 码返回 `null`。
 
 3. **复用预处理缓冲区 / 对象池（降 p99）**
    - 每次解码分配 16 个 mask、8 个 integral 等大数组，导致 p99 比中位数高 17–52%，max 370–700 ms（跨运行）。

@@ -1,534 +1,59 @@
 /**
- * LCC decoder.
+ * LCC decoder public wrapper.
  *
- * Phase A: axis-aligned clean images (screenshots, generated PNGs).
- * Phase B: perspective camera photos via connected-component finder
- * detection + homography, plus in-code colour calibration.
+ * The decode path is lcc-decoder.wasm.  `detectSymbol` / `sampleModule` are a
+ * small JavaScript helper used by the multi-frame stacker and benchmarks; they
+ * do not decode payloads.
  */
 
-import { BitWriter } from './bitstream.js';
-import { buildCalibrator } from './calibration.js';
-import { nearestIndex, rgbToLab } from './color.js';
-import {
-  ECC_LEVELS,
-  LAYERS,
-  LAYER_BY_ID,
-  eccNameOf,
-  resolveLayerName,
-  resolveShapeLayer,
-  sizeToVersion,
-  versionToSize,
-} from './constants.js';
-import { RankConstraint, viterbiCorrect } from './constraint.js';
-import { detectPerspective } from './detector.js';
-import { rsDecodeBlocks } from './ecc/rs.js';
-import { parseFrame } from './frame.js';
-import { readFormatBand } from './format/format-band.js';
-import { FINDER_PATTERN, sampleImage, sampleImageBilinear, validateImage } from './image-utils.js';
-import { createPreprocessor } from './preprocess.js';
-import { buildIlluminationModel } from './illumination.js';
-import { localRankSymbols } from './local-rank.js';
-import { BLACK, WHITE, makeLayout } from './layout.js';
-import { generatePalette } from './palettes.js';
-import { matchShape, refineBackground } from './shapes.js';
-import { makeWhitening } from './whitening.js';
+import { decodeAutoWasm, decodeExplicitWasm } from './lcc-wasm.js';
+import { detectSymbol, sampleModule } from './detect-symbol.js';
+import { MAX_IMAGE_PIXELS } from './image-utils.js';
 
-function finderCandidates(mask, width, height, horizontal) {
-  const candidates = [];
-  const outer = horizontal ? height : width;
-  const inner = horizontal ? width : height;
-  for (let a = 0; a < outer; a++) {
-    const runs = [];
-    let start = 0;
-    let color = horizontal ? mask[a * width] : mask[a];
-    for (let b = 1; b < inner; b++) {
-      const v = horizontal ? mask[a * width + b] : mask[b * width + a];
-      if (v !== color) {
-        runs.push({ color, start, length: b - start });
-        start = b;
-        color = v;
-      }
-    }
-    runs.push({ color, start, length: inner - start });
-    for (let i = 0; i + 4 < runs.length; i++) {
-      if (runs[i].color !== 1 || runs[i + 1].color !== 0 || runs[i + 2].color !== 1 ||
-          runs[i + 3].color !== 0 || runs[i + 4].color !== 1) continue;
-      const lens = [runs[i].length, runs[i + 1].length, runs[i + 2].length,
-        runs[i + 3].length, runs[i + 4].length];
-      const total = lens.reduce((s, x) => s + x, 0);
-      const unit = total / 7;
-      if (unit < 1) continue;
-      const tol = Math.max(1, unit * 0.65);
-      if (Math.abs(lens[0] - unit) > tol ||
-          Math.abs(lens[1] - 2 * unit) > tol ||
-          Math.abs(lens[2] - unit) > tol ||
-          Math.abs(lens[3] - 2 * unit) > tol ||
-          Math.abs(lens[4] - unit) > tol) continue;
-      const center = runs[i].start + 3.5 * unit;
-      candidates.push(horizontal
-        ? { x: center, y: a, unit }
-        : { x: a, y: center, unit });
-    }
+export { detectSymbol, sampleModule };
+
+function validateImage(image) {
+  if (!image || typeof image !== 'object') throw new Error('LCC: invalid image');
+  const { width, height, data } = image;
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
+    throw new Error('LCC: invalid image dimensions');
   }
-  return candidates;
-}
-
-function finderScore(mask, width, height, center) {
-  let matches = 0;
-  let total = 0;
-  for (let r = 0; r < 7; r++) {
-    for (let c = 0; c < 7; c++) {
-      const x = Math.round(center.x + (c - 3) * center.unit);
-      const y = Math.round(center.y + (r - 3) * center.unit);
-      if (x < 0 || x >= width || y < 0 || y >= height) continue;
-      const bit = mask[y * width + x] ? 0 : 1;
-      if (bit === FINDER_PATTERN[r][c]) matches++;
-      total++;
-    }
-  }
-  return total === 0 ? 0 : matches / total;
-}
-
-export function detectSymbol(image, options = {}) {
-  validateImage(image);
-  const { width, height } = image;
-  const variant = options.variant ?? createPreprocessor(image).get('otsu');
-  const { mask, thresholdAt } = variant;
-  const threshold = thresholdAt(width / 2, height / 2);
-  const rowC = finderCandidates(mask, width, height, true);
-  const colC = finderCandidates(mask, width, height, false);
-  const centers = [];
-  for (const r of rowC) {
-    let best = null;
-    let bestD = Infinity;
-    for (const c of colC) {
-      const tol = Math.max(2, 2.5 * Math.max(r.unit, c.unit));
-      const d = Math.hypot(r.x - c.x, r.y - c.y);
-      if (d <= tol && d < bestD) {
-        bestD = d;
-        best = c;
-      }
-    }
-    if (best) {
-      centers.push({ x: (r.x + best.x) / 2, y: (r.y + best.y) / 2, unit: (r.unit + best.unit) / 2 });
-    }
-  }
-  if (centers.length < 3) throw new Error('LCC detect: not enough finder candidates');
-
-  const filtered = centers.filter((c) => finderScore(mask, width, height, c) >= 0.8);
-  const usable = filtered.length >= 3 ? filtered : centers;
-
-  const clusters = [];
-  for (const c of usable) {
-    let found = null;
-    for (const cl of clusters) {
-      if (Math.hypot(c.x - cl.x, c.y - cl.y) < 2 * Math.max(c.unit, cl.unit)) {
-        found = cl;
-        break;
-      }
-    }
-    if (found) {
-      found.x = (found.x * found.n + c.x) / (found.n + 1);
-      found.y = (found.y * found.n + c.y) / (found.n + 1);
-      found.unit = (found.unit * found.n + c.unit) / (found.n + 1);
-      found.n++;
-    } else {
-      clusters.push({ ...c, n: 1 });
-    }
-  }
-  if (clusters.length < 3) throw new Error('LCC detect: not enough finder clusters');
-
-  const bySum = [...clusters].sort((a, b) => (a.x + a.y) - (b.x + b.y));
-  const tl = bySum[0];
-  let tr = null;
-  let bl = null;
-  let bestTR = -Infinity;
-  let bestBL = -Infinity;
-  for (const c of clusters) {
-    if (c === tl) continue;
-    if (c.x - c.y > bestTR) {
-      bestTR = c.x - c.y;
-      tr = c;
-    }
-    if (c.y - c.x > bestBL) {
-      bestBL = c.y - c.x;
-      bl = c;
-    }
-  }
-  if (!tr || !bl || tr === bl) throw new Error('LCC detect: could not identify three finders');
-  if (tr.x <= tl.x || bl.y <= tl.y) throw new Error('LCC detect: finder orientation is invalid');
-
-  const s = (tl.unit + tr.unit + bl.unit) / 3;
-  const n1 = Math.round((tr.x - tl.x) / s) + 7;
-  const n2 = Math.round((bl.y - tl.y) / s) + 7;
-  if (Math.abs(n1 - n2) > 1) throw new Error('LCC detect: inconsistent version estimate');
-  let N = Math.round((n1 + n2) / 2);
-  let version = Math.round((N - 21) / 4) + 1;
-  version = Math.max(1, Math.min(100, version));
-  N = versionToSize(version);
-
-  const originX = tl.x - 3.5 * s;
-  const originY = tl.y - 3.5 * s;
-  const sampler = (row, col) => sampleModule(image, originX, originY, s, row, col);
-  const thresholdAtRowCol = (row, col) => thresholdAt(
-    originX + (col + 0.5) * s,
-    originY + (row + 0.5) * s,
-  );
-  return {
-    originX,
-    originY,
-    s,
-    N,
-    version,
-    threshold,
-    thresholdAt,
-    thresholdAtRowCol,
-    sampler,
-    finders: { tl, tr, bl },
-  };
-}
-
-export function sampleModule(image, originX, originY, s, row, col) {
-  const cx = originX + (col + 0.5) * s;
-  const cy = originY + (row + 0.5) * s;
-  const radius = Math.max(0, Math.floor(s / 4) - 1);
-  return sampleImage(image, cx, cy, radius);
-}
-
-function modulePoint(det, row, col, u, v) {
-  if (typeof det.pointAt === 'function') {
-    return det.pointAt(row + v - 0.5, col + u - 0.5);
-  }
-  return [
-    det.originX + (col + u) * det.s,
-    det.originY + (row + v) * det.s,
-  ];
-}
-
-function sampleModuleGrid(image, det, row, col, gridN) {
-  const out = new Array(gridN * gridN);
-  const offsets = [0.25, 0.75];
-  for (let gy = 0; gy < gridN; gy++) {
-    for (let gx = 0; gx < gridN; gx++) {
-      const acc = [0, 0, 0];
-      for (const fv of offsets) {
-        for (const fu of offsets) {
-          const [x, y] = modulePoint(
-            det,
-            row,
-            col,
-            (gx + fu) / gridN,
-            (gy + fv) / gridN,
-          );
-          const rgb = sampleImageBilinear(image, x, y);
-          acc[0] += rgb[0];
-          acc[1] += rgb[1];
-          acc[2] += rgb[2];
-        }
-      }
-      out[gy * gridN + gx] = [acc[0] / 4, acc[1] / 4, acc[2] / 4];
-    }
-  }
-  return out;
-}
-
-function decodeText(payload) {
-  try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(payload);
-  } catch {
-    return null;
+  const pixels = width * height;
+  if (pixels > MAX_IMAGE_PIXELS) throw new Error('LCC: image too large');
+  if (!data || typeof data.length !== 'number' || data.length !== pixels * 3) {
+    throw new Error('LCC: image data length does not match dimensions');
   }
 }
 
-function makeExplicitDetector(image, options) {
-  const s = options.moduleSize;
-  const originX = options.origin.x;
-  const originY = options.origin.y;
-  return {
-    originX,
-    originY,
-    s,
-    version: options.version,
-    N: versionToSize(options.version),
-    threshold: options.threshold ?? 128,
-    thresholdAt: () => options.threshold ?? 128,
-    thresholdAtRowCol: () => options.threshold ?? 128,
-    pointAt: (row, col) => [originX + (col + 0.5) * s, originY + (row + 0.5) * s],
-    sampler: (row, col) => sampleModule(image, originX, originY, s, row, col),
-  };
+function finish(result, options) {
+  if (!result) {
+    throw new Error('LCC decode failed');
+  }
+  return result;
 }
 
 export function decode(image, options = {}) {
   validateImage(image);
-  const mode = options.detector ?? 'axis';
-  let det;
   if (options.sampler) {
-    det = { ...options, threshold: options.threshold ?? 128 };
-  } else if (options.moduleSize && options.version && options.origin) {
-    det = makeExplicitDetector(image, options);
-  } else if (mode === 'perspective') {
-    det = detectPerspective(image, options);
-  } else {
-    det = detectSymbol(image, options);
+    throw new Error('LCC decode: custom samplers are not supported by the wasm decoder');
   }
-
-  const rawSampler = det.sampler ?? ((row, col) => sampleModule(image, det.originX, det.originY, det.s, row, col));
-  const pointAt = det.pointAt ?? ((row, col) => [
-    det.originX + (col + 0.5) * det.s,
-    det.originY + (row + 0.5) * det.s,
-  ]);
-  const version = options.version ?? det.version ?? sizeToVersion(det.N);
-  const layoutProbe = makeLayout({ version, layer: 'G10', paletteMode: 'maxmin' });
-  const thresholdAtRowCol = det.thresholdAtRowCol ?? (() => det.threshold ?? 128);
-  const getFormatSymbol = (r, c) => {
-    const rgb = rawSampler(r, c);
-    const v = Math.max(rgb[0], rgb[1], rgb[2]);
-    return v < thresholdAtRowCol(r, c) ? BLACK : WHITE;
-  };
-  const fmt = readFormatBand(getFormatSymbol, layoutProbe);
-
-  const normalLayer = LAYER_BY_ID.get(fmt.modeId);
-  const shapeVariant = fmt.modeId === 7 ? (fmt.seed & 3) : 0;
-  const layerName = resolveLayerName(options.layer)
-    ?? (fmt.modeId === 7
-      ? resolveShapeLayer(fmt.shapeLayerId, fmt.shapeExt, shapeVariant)
-      : normalLayer?.name);
-  if (!layerName) throw new Error(`LCC decode: unknown layer id ${fmt.modeId}`);
-  const layer = LAYERS[layerName];
-  const isShapeLayer = !!layer.shapeSetSize;
-  const paletteMode = isShapeLayer ? 'maxmin' : (options.paletteMode ?? fmt.paletteMode);
-  const harmony = isShapeLayer ? false : (options.harmony ?? fmt.harmony);
-  const constraint = isShapeLayer ? false : (options.constraint ?? fmt.constraint);
-  const seed = isShapeLayer ? 0 : (options.seed ?? fmt.seed);
-
-  const paletteInfo = generatePalette(layerName, { mode: paletteMode, harmony });
-  const layout = makeLayout({ version, layer: layerName, paletteMode, harmony, paletteInfo });
-  const illumination = options.normalize === false
-    ? null
-    : buildIlluminationModel({ layout, image, pointAt, sampleRadius: 1 });
-  const sampler = illumination
-    ? (row, col) => illumination.normalize(rawSampler(row, col), row, col)
-    : rawSampler;
-  const calibrator = buildCalibrator({
-    layerName,
-    layout,
-    paletteInfo,
-    sampler,
-    threshold: det.threshold,
-  });
-
-  const symbolsCal = new Array(layout.dataCount);
-  const rgbSamples = new Array(layout.dataCount);
-  const patternShapes = isShapeLayer && layer.shapeSetSize > 1;
-  const gridN = patternShapes
-    ? Math.max(8, Math.min(16, Math.round(det.s || 12)))
-    : 0;
-  const shapeLineWidthPx = patternShapes ? Math.max(1, Math.round(det.s / 8)) : 0;
-  const shapeInsetPx = patternShapes ? Math.max(1, Math.round(det.s / 16)) : 0;
-  const shapeLineWidthGrid = patternShapes
-    ? Math.max(1, Math.round((shapeLineWidthPx * gridN) / det.s))
-    : 0;
-  const shapeInsetGrid = patternShapes
-    ? Math.max(1, Math.round((shapeInsetPx * gridN) / det.s))
-    : 0;
-  for (let i = 0; i < layout.dataCoords.length; i++) {
-    const [r, c] = layout.dataCoords[i];
-    if (patternShapes) {
-      const grid = sampleModuleGrid(image, det, r, c, gridN);
-      const normalized = grid.map((rgb) => (
-        illumination ? illumination.normalize(rgb, r, c) : rgb
-      ));
-      const shapeResult = matchShape(normalized, gridN, {
-        lineWidth: shapeLineWidthGrid,
-        inset: shapeInsetGrid,
-        sharpen: (det.s || 0) < 12,
-        shapeCount: layer.shapeSetSize,
-      });
-      const background = shapeResult.shape === 0
-        ? shapeResult.background
-        : refineBackground(
-          normalized,
-          shapeResult.shape,
-          gridN,
-          shapeLineWidthGrid,
-          shapeInsetGrid,
-        );
-      const colorIndex = calibrator.classify(background);
-      symbolsCal[i] = shapeResult.shape * layer.paletteSize + colorIndex;
-      rgbSamples[i] = background;
-    } else {
-      const rgb = sampler(r, c);
-      rgbSamples[i] = rgb;
-      symbolsCal[i] = calibrator.classify(rgb);
-    }
+  if (options.moduleSize && options.version && options.origin) {
+    return finish(decodeExplicitWasm(image, {
+      originX: options.origin.x,
+      originY: options.origin.y,
+      moduleSize: options.moduleSize,
+      version: options.version,
+      threshold: options.threshold ?? 128,
+    }), options);
   }
-
-  const errorMeta = {
-    layer: layerName,
-    version,
-    N: layout.N,
-    paletteMode,
-    constraint,
-    seed,
-    shapeSetSize: layer.shapeSetSize ?? 1,
-    legacyLayer: layer.legacyName ?? null,
-    shapeLayerId: isShapeLayer ? layer.shapeLayerId : null,
-    shapeExt: isShapeLayer ? layer.shapeExt : 0,
-    shapeVariant: isShapeLayer ? (layer.shapeVariant ?? 0) : 0,
-    ecc: ECC_LEVELS[fmt.eccIndex] ?? LAYERS[layerName].ecc,
-    eccLevel: eccNameOf(ECC_LEVELS[fmt.eccIndex] ?? LAYERS[layerName].ecc),
-  };
-
-  const attempt = (symbols, costs, calibrationType) => {
-    let writer;
-    let capacityBits;
-    if (layerName === 'G10') {
-      writer = new BitWriter();
-      for (const s of symbols) writer.writeBit(s & 1);
-      capacityBits = layout.dataCount;
-    } else if (constraint) {
-      const rc = new RankConstraint(paletteInfo);
-      let corrected = symbols;
-      let useCosts = costs;
-      if (!useCosts && typeof calibrator.costs === 'function') {
-        useCosts = rgbSamples.map((rgb) => calibrator.costs(rgb));
-      }
-      if (useCosts) corrected = viterbiCorrect(useCosts, paletteInfo, rc.initialRank);
-      try {
-        writer = rc.decode(corrected, { lenient: true });
-      } catch (e) {
-        e.lccMeta = errorMeta;
-        throw e;
-      }
-      capacityBits = rc.capacityBitsForModules(layout.dataCount);
-    } else {
-      const bitsPerModule = LAYERS[layerName].bitsPerModule;
-      writer = new BitWriter();
-      for (const s of symbols) writer.writeBits(s, bitsPerModule);
-      capacityBits = layout.dataCount * bitsPerModule;
-    }
-
-    const S = Math.floor(capacityBits / 8);
-    if (S <= 0) throw new Error('LCC decode: no RS symbols');
-    const bitBytes = writer.toBytes();
-    const rsReceived = bitBytes.slice(0, S);
-    const ecc = ECC_LEVELS[fmt.eccIndex] ?? LAYERS[layerName].ecc;
-    let rs;
-    try {
-      rs = rsDecodeBlocks(rsReceived, ecc);
-    } catch (e) {
-      e.lccMeta = errorMeta;
-      throw e;
-    }
-    const frameBytes = makeWhitening(seed)(rs.data);
-    let frame;
-    try {
-      frame = parseFrame(frameBytes);
-    } catch (e) {
-      e.lccMeta = errorMeta;
-      throw e;
-    }
-
-    return {
-      payload: frame.payload,
-      text: decodeText(frame.payload),
-      meta: {
-        layer: layerName,
-        version,
-        N: layout.N,
-        moduleSize: det.s,
-        paletteMode,
-        harmony,
-        constraint,
-        seed,
-        ecc,
-        eccLevel: eccNameOf(ecc),
-        paletteSize: paletteInfo.palette.length,
-        minDeltaE: paletteInfo.minDeltaE,
-        constraintRankCount: paletteInfo.rankCount,
-        constraintMaxDiff: paletteInfo.maxRankDiff,
-        dataCount: layout.dataCount,
-        capacityBits,
-        bitsPerModule: layerName === 'G10'
-          ? 1
-          : constraint
-            ? capacityBits / layout.dataCount
-            : LAYERS[layerName].bitsPerModule,
-        formatBlocks: layout.format.blocksPerCopy,
-        rsSymbols: S,
-        correctedSymbols: rs.corrected,
-        calibration: calibrationType,
-        flags: frame.flags,
-        shapeLayer: isShapeLayer,
-        legacyLayer: layer.legacyName ?? null,
-        shapeLayerId: isShapeLayer ? layer.shapeLayerId : null,
-        shapeExt: isShapeLayer ? layer.shapeExt : 0,
-        shapeVariant: isShapeLayer ? (layer.shapeVariant ?? 0) : 0,
-        shapeSetSize: layer.shapeSetSize ?? 1,
-        shapeBits: isShapeLayer ? Math.log2(layer.shapeSetSize) : 0,
-        colorCount: layer.paletteSize,
-        shapeGrid: patternShapes ? gridN : 0,
-      },
-      detection: det,
-    };
-  };
-
-  try {
-    return attempt(symbolsCal, null, calibrator.type);
-  } catch (firstError) {
-    if (!firstError.lccMeta) firstError.lccMeta = errorMeta;
-    if (!isShapeLayer && layerName !== 'G10' && paletteInfo.kind === 'gray') {
-      const lr = localRankSymbols({ layout, rgbSamples, levels: paletteInfo.paletteSize });
-      try {
-        return attempt(Array.from(lr.symbols), lr.costs, 'local-rank');
-      } catch (secondError) {
-        if (!secondError.lccMeta) secondError.lccMeta = errorMeta;
-        throw secondError;
-      }
-    }
-    throw firstError;
-  }
+  const mode = options.detector ?? 'axis';
+  return finish(decodeAutoWasm(image, { detector: mode }), options);
 }
 
 export function decodeAuto(image, options = {}) {
   validateImage(image);
-  const detectorOption = options.detector === 'auto' ? undefined : options.detector;
-  const pre = createPreprocessor(image);
-  const sequence = [];
-  if (!detectorOption || detectorOption === 'axis') {
-    sequence.push(['value-otsu', 'axis'], ['value-otsu+close', 'axis'], ['otsu', 'axis'], ['otsu+close', 'axis']);
-  }
-  if (!detectorOption || detectorOption === 'perspective') {
-    for (const name of [
-      'value-adaptive-1/8+close',
-      'value-adaptive-1/8',
-      'value-otsu+close',
-      'value-otsu',
-      'adaptive-1/8+close',
-      'adaptive-1/8',
-      'adaptive-1/16+close',
-      'adaptive-1/16',
-      'otsu+close',
-      'otsu',
-      'adaptive-1/4+close',
-      'adaptive-1/4',
-    ]) {
-      sequence.push([name, 'perspective']);
-    }
-  }
-  const errors = [];
-  let lastMeta = null;
-  for (const [name, detector] of sequence) {
-    const variant = pre.get(name);
-    if (!variant) continue;
-    try {
-      return decode(image, { ...options, detector, variant });
-    } catch (e) {
-      if (e.lccMeta) lastMeta = e.lccMeta;
-      errors.push(`${name}/${detector}: ${e.message}`);
-    }
-  }
-  const err = new Error(`LCC decode failed (${errors.slice(0, 8).join(' | ')})`);
-  if (lastMeta) err.lccMeta = lastMeta;
-  throw err;
+  const detector = options.detector === 'axis' || options.detector === 'perspective'
+    ? options.detector
+    : 'auto';
+  return finish(decodeAutoWasm(image, { detector }), options);
 }

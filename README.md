@@ -126,7 +126,7 @@ npm run demo                 # 生成下面 5 个基础文本示例
 npm run shape:examples       # 生成前 4 个文本的形状层示例
 npm run shape32:examples     # 生成 32 符号层示例（G15/G25/G35/C25/C55/C65/C85）
 npm test                     # 测试
-npm run build:wasm           # 编译 C 合成/解码核心到 docs/lib/lcc.wasm（有 emcc 用 Emscripten，否则用 zig）
+npm run build:wasm           # 编译两个 C 核心：docs/lib/lcc-decoder.wasm + lcc-encoder.wasm（有 emcc 用 Emscripten，否则用 zig）
 npm run build:web            # 复制浏览器核心到 docs/lib（保留 wasm）
 npm run web                  # http://localhost:8080
 ```
@@ -341,7 +341,7 @@ Web 版在 `docs/`：
 - 打开失败时会自动回退约束：1920×1080 → 1280×720 → `environment` → 默认摄像头；权限被拒、无摄像头、被其他应用占用都有对应提示。失败状态会显示 `secure / protocol / mediaDevices / error` 诊断信息。
 - “多帧”可选 1/3/5 帧。连续扫描或拍照时，每帧独立检测，按 `version/N` 分组，统一投影到 canonical 模块网格后平均，再交给正常解码器。
 - 多帧平均主要降低随机噪声、传感器噪声和压缩噪声；对随机噪声的理论增益约为 `√N`。它不修复运动模糊或失焦。中性色偏由 finder/alignment 的分通道黑白场矫正，不靠多帧平均。
-- 网页扫描优先走 `docs/lib/lcc.wasm`。单帧和多帧都在 C 里完成透视侦测、合成和解码；画面长边超过 960 像素时先缩小再找定位标记。形状用模板匹配。WASM 失败或遇到 constraint 码时回退到 JS。
+- 编码和解码的生产路径都在 C/WASM：`lcc-encoder.wasm` 负责 frame/白化/RS/约束映射/layout/格式带/渲染，`lcc-decoder.wasm` 负责侦测、合成、约束解码和 RS。单帧和多帧都在 C 里完成透视侦测、合成和解码；画面长边超过 960 像素时先缩小再找定位标记。JS 只保留输入校验和对象/缓冲区转换。
 - 多帧叠加要求码面基本静止；未来做动画/喷泉码时，不能把不同 payload 的帧直接平均，必须按帧 ID 分组。
 - 扫描统计会显示叠加帧数、canonical 模块尺寸和帧间 σ，作为置信度参考；最终仍由 RS + CRC 校验。
 
@@ -359,10 +359,13 @@ Web 版在 `docs/`：
 ## 项目结构
 
 ```
-native/            C 合成与扫描解码，编译为 docs/lib/lcc.wasm
+native/            C 核心；分别编译为 docs/lib/lcc-encoder.wasm 与 docs/lib/lcc-decoder.wasm
 src/
-  encoder.js         编码管线
-  decoder.js         轴对齐 + 自动解码 + 灰度多假设
+  encoder.js         encoder.wasm 的薄封装
+  decoder.js         decoder.wasm 的薄封装
+  lcc-encoder-wasm.js / lcc-wasm.js  wasm 加载与打包/解包
+  layout-api.js      wasm 提供的 layout/palette 辅助 API
+  detect-symbol.js   多帧叠加用的定位辅助（不解码载荷）
   detector.js        透视检测 / 单应
   preprocess.js      Otsu / 自适应阈值 / 闭运算 / 多假设
   illumination.js    finder/alignment 分通道黑白场

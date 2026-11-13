@@ -38,7 +38,7 @@ import {
 import { decodePNG, encodePNG } from '../src/png.js';
 import { buildFrame, parseFrame } from '../src/frame.js';
 import { stackCanonicalFrames } from '../src/stack.js';
-import { decodeAutoWasm, stackCanonicalFramesWasm, wasmExports, wasmMemoryStats } from '../docs/lib/lcc-wasm.js';
+import { decodeAutoWasm, stackCanonicalFramesWasm, wasmExports, wasmMemoryStats } from '../src/lcc-wasm.js';
 import { bytes, gaussian, int, mulberry32, pick, text } from '../scripts/lib/rng.mjs';
 
 function parseArgs(argv) {

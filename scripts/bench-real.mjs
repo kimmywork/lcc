@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { decodePNG } from '../src/png.js';
-import { scanFramesWasm } from '../docs/lib/lcc-wasm.js';
+import { scanFramesWasm } from '../src/lcc-wasm.js';
 
 // Only a decoder rejection is a normal miss. Loader/OOM failures should abort
 // the run so a missing or broken wasm cannot look like a low recognition rate.
