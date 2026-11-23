@@ -75,6 +75,10 @@ typedef struct {
   int calibration;
   char layer[8];
   char palette_mode[16];
+  int stack_frames;
+  int stack_requested;
+  int stack_stacked;
+  double stack_noise;
 } LccDecodeMeta;
 
 enum {

@@ -7,6 +7,10 @@
 static uint8_t *g_last = NULL;
 static int g_last_len = 0;
 
+/* Decode/scan result header: fixed fields 0..120, multi-frame stats 120..152,
+   payload starts at 152. */
+#define LCC_DECODE_HEADER 152
+
 uint8_t *lcc_last(void) { return g_last; }
 int lcc_last_len(void) { return g_last_len; }
 
@@ -46,14 +50,14 @@ static void wr_f32(uint8_t *p, float v) {
 }
 
 static int publish_decode_status(int status) {
-  uint8_t *out = lcc_alloc(120);
+  uint8_t *out = lcc_alloc(LCC_DECODE_HEADER);
   if (!out) {
     set_last(NULL, 0);
     return LCC_ERR;
   }
-  memset(out, 0, 120);
+  memset(out, 0, LCC_DECODE_HEADER);
   wr_u32(out, (uint32_t)status);
-  set_last(out, 120);
+  set_last(out, LCC_DECODE_HEADER);
   return status;
 }
 
@@ -282,7 +286,7 @@ int lcc_api_decode(const uint8_t *rgb, size_t rgb_len, int width, int height, in
   LccDecodeMeta meta;
   memset(&meta, 0, sizeof(meta));
   const int status = lcc_decode_image(&image, mode, &payload, &payload_len, &meta);
-  const int header = 120;
+  const int header = LCC_DECODE_HEADER;
   uint8_t *out = lcc_alloc((size_t)header + (status == LCC_OK ? (size_t)payload_len : 0));
   if (!out) {
     lcc_release(payload);
@@ -311,6 +315,10 @@ int lcc_api_decode(const uint8_t *rgb, size_t rgb_len, int width, int height, in
   wr_u32(out + 92, status == LCC_OK ? (uint32_t)payload_len : 0);
   memcpy(out + 96, meta.layer, 8);
   memcpy(out + 104, meta.palette_mode, 16);
+  wr_u32(out + 120, (uint32_t)meta.stack_frames);
+  wr_u32(out + 124, (uint32_t)meta.stack_requested);
+  wr_u32(out + 128, (uint32_t)meta.stack_stacked);
+  wr_f64(out + 132, meta.stack_noise);
   if (status == LCC_OK && payload_len) memcpy(out + header, payload, (size_t)payload_len);
   lcc_release(payload);
   set_last(out, header + (status == LCC_OK ? payload_len : 0));
@@ -396,7 +404,7 @@ int lcc_api_decode_explicit(
     &image, origin_x, origin_y, module_size, version, threshold,
     &payload, &payload_len, &meta
   );
-  const int header = 120;
+  const int header = LCC_DECODE_HEADER;
   uint8_t *out = lcc_alloc((size_t)header + (status == LCC_OK ? (size_t)payload_len : 0));
   if (!out) {
     lcc_release(payload);
@@ -425,6 +433,10 @@ int lcc_api_decode_explicit(
   wr_u32(out + 92, status == LCC_OK ? (uint32_t)payload_len : 0);
   memcpy(out + 96, meta.layer, 8);
   memcpy(out + 104, meta.palette_mode, 16);
+  wr_u32(out + 120, (uint32_t)meta.stack_frames);
+  wr_u32(out + 124, (uint32_t)meta.stack_requested);
+  wr_u32(out + 128, (uint32_t)meta.stack_stacked);
+  wr_f64(out + 132, meta.stack_noise);
   if (status == LCC_OK && payload_len) memcpy(out + header, payload, (size_t)payload_len);
   lcc_release(payload);
   set_last(out, header + (status == LCC_OK ? payload_len : 0));
@@ -459,7 +471,7 @@ int lcc_api_scan(const uint8_t *input, int input_len) {
   LccDecodeMeta meta;
   memset(&meta, 0, sizeof(meta));
   const int status = lcc_scan_frames(frames, count, &payload, &payload_len, &meta);
-  const int header = 120;
+  const int header = LCC_DECODE_HEADER;
   uint8_t *out = lcc_alloc((size_t)header + (status == LCC_OK ? (size_t)payload_len : 0));
   if (!out) {
     lcc_release(payload);
@@ -488,6 +500,10 @@ int lcc_api_scan(const uint8_t *input, int input_len) {
   wr_u32(out + 92, status == LCC_OK ? (uint32_t)payload_len : 0);
   memcpy(out + 96, meta.layer, 8);
   memcpy(out + 104, meta.palette_mode, 16);
+  wr_u32(out + 120, (uint32_t)meta.stack_frames);
+  wr_u32(out + 124, (uint32_t)meta.stack_requested);
+  wr_u32(out + 128, (uint32_t)meta.stack_stacked);
+  wr_f64(out + 132, meta.stack_noise);
   if (status == LCC_OK && payload_len) memcpy(out + header, payload, (size_t)payload_len);
   lcc_release(payload);
   set_last(out, header + (status == LCC_OK ? payload_len : 0));

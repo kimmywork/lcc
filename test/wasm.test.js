@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { decodeAuto, detectSymbol } from '../src/decoder.js';
 import { encode } from '../src/encoder.js';
 import { stackCanonicalFrames } from '../src/stack.js';
-import { decodeAutoWasm, stackCanonicalFramesWasm } from '../src/lcc-wasm.js';
+import { decodeAutoWasm, scanFramesWasm, stackCanonicalFramesWasm } from '../src/lcc-wasm.js';
 
 function rng(seed) {
   let s = seed >>> 0;
@@ -137,4 +137,30 @@ test('wasm stack and decode are faster than JS on the same fixture', async () =>
   // the same order of magnitude even on a slow/noisy CI runner.
   assert.ok(wasmStack < jsStack * 2 + 50, `stack wasm ${wasmStack.toFixed(1)} ms, js ${jsStack.toFixed(1)} ms`);
   assert.ok(wasmDecode < jsDecode * 2 + 50, `decode wasm ${wasmDecode.toFixed(1)} ms, js ${jsDecode.toFixed(1)} ms`);
+});
+
+test('scan reports the frames it actually fused', () => {
+  const image = encode('scan stats', {
+    layer: 'G20',
+    version: 4,
+    moduleSize: 16,
+    width: 900,
+    height: 900,
+    mode: 'compact',
+    constraint: false,
+  }).image;
+  const frames = [0, 1, 2].map((i) => noisy(image, 10, 70 + i));
+
+  const burst = scanFramesWasm(frames);
+  assert.equal(burst.text, 'scan stats');
+  assert.equal(burst.meta.stackRequested, 3);
+  assert.equal(burst.meta.stackFrames, 3);
+  assert.equal(burst.meta.stackStacked, true);
+  assert.ok(Number.isFinite(burst.meta.stackNoise));
+
+  const single = scanFramesWasm([frames[0]]);
+  assert.equal(single.text, 'scan stats');
+  assert.equal(single.meta.stackRequested, 1);
+  assert.equal(single.meta.stackFrames, 1);
+  assert.equal(single.meta.stackStacked, false);
 });
