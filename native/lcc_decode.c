@@ -1877,7 +1877,11 @@ static void gate_dets(LccDet *dets, int count) {
     }
     scales[j + 1] = v;
   }
-  const double med = nscales > 0 ? scales[nscales / 2] : 0;
+  const double med = nscales <= 0
+    ? 0
+    : (nscales & 1
+        ? scales[nscales / 2]
+        : (scales[nscales / 2 - 1] + scales[nscales / 2]) * 0.5);
   const double min_score = best_score * 0.55;
   for (int i = 0; i < count; i++) {
     if (!dets[i].valid) continue;
@@ -1916,6 +1920,7 @@ static int scan_frames_impl(
   int *payload_len,
   LccDecodeMeta *meta,
   double deadline_ms,
+  double decode_deadline_ms,
   int *out_best
 ) {
   if (out_best) *out_best = -1;
@@ -1951,6 +1956,9 @@ static int scan_frames_impl(
     lcc_release(variants);
     return LCC_ERR;
   }
+  /* Keep the strongest detection for a single-frame recovery attempt even if
+     gating later filters every frame out of the fusion. */
+  const int recovery_det = best_det_index(dets, count);
   gate_dets(dets, count);
   const int best_det = best_det_index(dets, count);
   uint8_t *rgb = NULL;
@@ -1964,10 +1972,10 @@ static int scan_frames_impl(
     lcc_release(rgb);
     lcc_release(dets);
     lcc_release(variants);
-    if (out_best) *out_best = best_det;
+    if (out_best) *out_best = best_det >= 0 ? best_det : recovery_det;
     return stack_status == LCC_OK ? LCC_ERR : stack_status;
   }
-  if (out_best) *out_best = source;
+  if (out_best) *out_best = stacked ? (best_det >= 0 ? best_det : source) : source;
   int status;
   if (!stacked) {
     LccFound found;
@@ -1985,9 +1993,9 @@ static int scan_frames_impl(
     axis.origin_y = quiet * module - 0.5;
     axis.axis = 1;
     LccImage image = { width, height, rgb };
-    /* The primary stacked decode always gets its full axis sweep; only the
-       fallback ladder is budgeted. */
-    status = decode_axis_variants(&image, &axis, payload, payload_len, meta, 0);
+    /* The primary stacked decode always gets its full axis sweep; a
+       white-balance retry passes its own deadline instead. */
+    status = decode_axis_variants(&image, &axis, payload, payload_len, meta, decode_deadline_ms);
   }
   /* decode_found() clears the meta on success, so restore the stack stats. */
   if (status == LCC_OK) set_stack_meta(meta, used, count, stacked, noise);
@@ -2083,13 +2091,14 @@ int lcc_scan_frames(
   LccDecodeMeta *meta
 ) {
   const double started = lcc_now_ms();
-  /* One wall-clock budget for the whole scan, including detection, stacking,
-     the white-balance retry and the final ladder.  Variant loops poll it, so a
-     hopeless frame cannot stall the caller for seconds. */
+  /* One wall-clock budget for the retry stages: detection of further frames,
+     the white-balance pass and the final ladder.  The primary pass decodes its
+     stacked image without a deadline so a slow device still gets the real
+     attempt. */
   const double budget_ms = 1200.0;
   const double deadline = started > 0 ? started + budget_ms : 0;
   int best = -1;
-  const int status = scan_frames_impl(frames, count, payload, payload_len, meta, deadline, &best);
+  const int status = scan_frames_impl(frames, count, payload, payload_len, meta, deadline, 0, &best);
   if (status == LCC_OK || !frames || count <= 0 || count > 8) return status;
   int retry = status;
 
@@ -2101,26 +2110,30 @@ int lcc_scan_frames(
      budget, because it repeats the whole detection pass. */
   if (deadline == 0 || lcc_now_ms() - started < budget_ms * 0.45) {
     for (int i = 0; i < count; i++) {
+      if (deadline > 0 && lcc_now_ms() > deadline) break;
       if (lcc_white_balance_copy(&frames[i], &balanced[n])) map[n++] = i;
     }
-    if (n > 0) {
-      int wb_best = -1;
-      retry = scan_frames_impl(balanced, n, payload, payload_len, meta, deadline, &wb_best);
-      if (retry == LCC_OK) {
-        for (int i = 0; i < n; i++) lcc_release((void *)balanced[i].data);
-        return retry;
-      }
-      if (wb_best >= 0 && wb_best < n) {
-        if (deadline == 0 || lcc_now_ms() < deadline) {
-          const int full = decode_image_impl(&balanced[wb_best], 2, payload, payload_len, meta, 10, deadline);
-          if (full == LCC_OK) {
-            set_stack_meta(meta, 1, count, 0, 0);
-            for (int i = 0; i < n; i++) lcc_release((void *)balanced[i].data);
-            return full;
-          }
+  }
+  if (n > 0 && (deadline == 0 || lcc_now_ms() < deadline)) {
+    int wb_best = -1;
+    /* Budget the retry end to end, including its stacked axis sweep. */
+    retry = scan_frames_impl(balanced, n, payload, payload_len, meta, deadline, deadline, &wb_best);
+    if (retry == LCC_OK) {
+      /* Some copies may have failed; report against the original burst. */
+      meta->stack_requested = count;
+      for (int i = 0; i < n; i++) lcc_release((void *)balanced[i].data);
+      return retry;
+    }
+    if (wb_best >= 0 && wb_best < n) {
+      if (deadline == 0 || lcc_now_ms() < deadline) {
+        const int full = decode_image_impl(&balanced[wb_best], 2, payload, payload_len, meta, 10, deadline);
+        if (full == LCC_OK) {
+          set_stack_meta(meta, 1, count, 0, 0);
+          for (int i = 0; i < n; i++) lcc_release((void *)balanced[i].data);
+          return full;
         }
-        best = map[wb_best];
       }
+      best = map[wb_best];
     }
   }
   for (int i = 0; i < n; i++) lcc_release((void *)balanced[i].data);

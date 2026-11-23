@@ -38,6 +38,21 @@ static int median_of(const int *values, int n) {
   return (int)lcc_js_round((tmp[n / 2 - 1] + tmp[n / 2]) * 0.5);
 }
 
+/* Map a canonical module coordinate (centres at index + 0.5) into the source
+   frame.  Returns 0 when the projection is degenerate. */
+static int project_point(const LccDet *det, double mx, double my, double *px, double *py) {
+  if (det->has_h) {
+    const double den = det->H[6] * mx + det->H[7] * my + det->H[8];
+    if (fabs(den) < 1e-12) return 0;
+    *px = (det->H[0] * mx + det->H[1] * my + det->H[2]) / den;
+    *py = (det->H[3] * mx + det->H[4] * my + det->H[5]) / den;
+    return 1;
+  }
+  *px = det->origin_x + mx * det->s;
+  *py = det->origin_y + my * det->s;
+  return 1;
+}
+
 int lcc_stack_frames(
   const LccImage *frames,
   const LccDet *dets,
@@ -192,45 +207,38 @@ int lcc_stack_frames(
           const double mx = (double)col + ((double)sx + 0.5) / (double)sub;
           const double my = (double)row + ((double)sy + 0.5) / (double)sub;
           for (int fi = 0; fi < best_n; fi++) {
-            const LccImage *frame = &frames[best[fi]];
-            const LccDet *det = &dets[best[fi]];
-            double px, py;
-            if (det->has_h) {
-              const double den = det->H[6] * mx + det->H[7] * my + det->H[8];
-              if (fabs(den) < 1e-12) {
-                vals[0][fi] = 255;
-                vals[1][fi] = 255;
-                vals[2][fi] = 255;
-                continue;
-              }
-              px = (det->H[0] * mx + det->H[1] * my + det->H[2]) / den;
-              py = (det->H[3] * mx + det->H[4] * my + det->H[5]) / den;
-            } else {
-              px = det->origin_x + mx * det->s;
-              py = det->origin_y + my * det->s;
-            }
+            double px = 0, py = 0;
             int rgb[3] = { 255, 255, 255 };
-            if (isfinite(px) && isfinite(py)) lcc_sample_bilinear(frame, px, py, rgb);
+            if (project_point(&dets[best[fi]], mx, my, &px, &py) && isfinite(px) && isfinite(py)) {
+              lcc_sample_bilinear(&frames[best[fi]], px, py, rgb);
+            }
             vals[0][fi] = rgb[0];
             vals[1][fi] = rgb[1];
             vals[2][fi] = rgb[2];
           }
           for (int ch = 0; ch < 3; ch++) cell[sy][sx][ch] = median_of(vals[ch], best_n);
-          if (best_n >= 2 && sy == 0 && sx == 0) {
-            double mean = 0;
-            for (int fi = 0; fi < best_n; fi++) {
-              mean += 0.2126 * vals[0][fi] + 0.7152 * vals[1][fi] + 0.0722 * vals[2][fi];
-            }
-            mean /= best_n;
-            double var = 0;
-            for (int fi = 0; fi < best_n; fi++) {
-              const double lum = 0.2126 * vals[0][fi] + 0.7152 * vals[1][fi] + 0.0722 * vals[2][fi];
-              var += (lum - mean) * (lum - mean);
-            }
-            noise_sum += sqrt(var / best_n);
-            noise_count++;
-          }
         }
+      }
+      /* Frame disagreement is measured at the module centre, not at the
+         top-left sub-cell, so boundary disagreement does not dominate sigma. */
+      if (best_n >= 2) {
+        double lum[16];
+        for (int fi = 0; fi < best_n; fi++) {
+          double px = 0, py = 0;
+          int rgb[3] = { 255, 255, 255 };
+          if (project_point(&dets[best[fi]], (double)col + 0.5, (double)row + 0.5, &px, &py) &&
+              isfinite(px) && isfinite(py)) {
+            lcc_sample_bilinear(&frames[best[fi]], px, py, rgb);
+          }
+          lum[fi] = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+        }
+        double mean = 0;
+        for (int fi = 0; fi < best_n; fi++) mean += lum[fi];
+        mean /= best_n;
+        double var = 0;
+        for (int fi = 0; fi < best_n; fi++) var += (lum[fi] - mean) * (lum[fi] - mean);
+        noise_sum += sqrt(var / best_n);
+        noise_count++;
       }
       const double block_x0 = ((double)col + quiet_zone) * module;
       const double block_y0 = ((double)row + quiet_zone) * module;

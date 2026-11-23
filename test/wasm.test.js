@@ -158,6 +158,14 @@ test('scan reports the frames it actually fused', () => {
   assert.equal(burst.meta.stackStacked, true);
   assert.ok(Number.isFinite(burst.meta.stackNoise));
 
+  // One blank frame must be dropped, not counted as fused.
+  const blank = { width: image.width, height: image.height, data: new Uint8Array(image.data.length).fill(255) };
+  const partial = scanFramesWasm([frames[0], blank, frames[2]]);
+  assert.equal(partial.text, 'scan stats');
+  assert.equal(partial.meta.stackRequested, 3);
+  assert.equal(partial.meta.stackFrames, 2);
+  assert.equal(partial.meta.stackStacked, true);
+
   const single = scanFramesWasm([frames[0]]);
   assert.equal(single.text, 'scan stats');
   assert.equal(single.meta.stackRequested, 1);

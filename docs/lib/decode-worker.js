@@ -27,7 +27,11 @@ function decodeDetected(image, detector) {
   }
 }
 
-function decodeBurst(images) {
+function withinBudget(deadline) {
+  return !deadline || Date.now() < deadline;
+}
+
+function decodeBurst(images, deadline) {
   let result = null;
   try {
     result = scanFramesWasm(images);
@@ -38,7 +42,9 @@ function decodeBurst(images) {
   if (result) return { result, stack: null };
 
   let stack = null;
-  if (images.length > 1) {
+  /* The native scan already spent its own budget; only start the fallback
+     while the caller's overall deadline still has room. */
+  if (!result && images.length > 1 && withinBudget(deadline)) {
     try {
       const detections = images.map((image) => {
         try {
@@ -47,17 +53,21 @@ function decodeBurst(images) {
           return null;
         }
       });
-      stack = stackCanonicalFramesWasm(images, detections, { quietZone: 4 });
+      if (withinBudget(deadline)) {
+        stack = stackCanonicalFramesWasm(images, detections, { quietZone: 4 });
+      }
     } catch {
       stack = null;
     }
-    if (stack) {
-      const image = stack.stacked ? stack.image : images[images.length - 1];
+    if (stack && withinBudget(deadline)) {
+      // The stacker picks the frame: with a single usable detection it returns
+      // that frame with stacked=false, so decode stack.image either way.
+      const image = stack.image ?? images[images.length - 1];
       result = decodeDetected(image, stack.stacked ? 'axis' : 'perspective');
       if (result) result.meta.detectionPath = stack.stacked ? 'stack+axis' : 'direct';
     }
   }
-  if (!result && images.length === 1) {
+  if (!result && images.length === 1 && withinBudget(deadline)) {
     result = decodeDetected(images[0], 'auto');
     if (result) result.meta.detectionPath = 'direct';
   }
@@ -70,7 +80,7 @@ self.onmessage = (event) => {
   const payload = { type: 'result', id: message.id, result: null, stack: null };
   try {
     const images = Array.isArray(message.frames) ? message.frames.map(toImage) : [];
-    const outcome = decodeBurst(images);
+    const outcome = decodeBurst(images, Number(message.deadline) || 0);
     payload.result = outcome.result;
     if (outcome.stack) {
       payload.stack = {

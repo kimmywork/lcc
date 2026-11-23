@@ -14,11 +14,20 @@ function groupKey(det) {
   return `${det.version}|${det.N}`;
 }
 
-/** Per-channel median across frames; even counts average the middle two. */
-function medianOf(values, n) {
-  const tmp = Array.from(values.subarray(0, n)).sort((a, b) => a - b);
-  if (n % 2 === 1) return tmp[(n - 1) / 2];
-  return Math.round((tmp[n / 2 - 1] + tmp[n / 2]) / 2);
+/** Per-channel median across frames; even counts average the middle two.
+ *  Sorts into a reusable scratch buffer so fusion allocates nothing per cell. */
+function medianInto(scratch, values, n) {
+  for (let i = 0; i < n; i++) {
+    const v = values[i];
+    let j = i - 1;
+    while (j >= 0 && scratch[j] > v) {
+      scratch[j + 1] = scratch[j];
+      j--;
+    }
+    scratch[j + 1] = v;
+  }
+  if (n % 2 === 1) return scratch[(n - 1) / 2];
+  return Math.round((scratch[n / 2 - 1] + scratch[n / 2]) / 2);
 }
 
 function pointAtOf(det) {
@@ -112,19 +121,22 @@ export function stackCanonicalFrames(frames, detections, options = {}) {
   }
   const data = new Uint8Array(width * height * 3).fill(255);
   const SUB = 16;
-  const vals = [new Int32Array(best.length), new Int32Array(best.length), new Int32Array(best.length)];
+  const n = best.length;
+  const vals = [new Int32Array(n), new Int32Array(n), new Int32Array(n)];
+  const scratch = new Int32Array(n);
+  const lum = new Float64Array(n);
+  const cell = new Int32Array(SUB * SUB * 3);
   const points = best.map((item) => pointAtOf(item.det));
   let noiseSum = 0;
   let noiseCount = 0;
 
   for (let row = 0; row < ref.N; row++) {
     for (let col = 0; col < ref.N; col++) {
-      const cell = new Int32Array(SUB * SUB * 3);
       for (let sy = 0; sy < SUB; sy++) {
         for (let sx = 0; sx < SUB; sx++) {
           const my = row + (sy + 0.5) / SUB;
           const mx = col + (sx + 0.5) / SUB;
-          for (let fi = 0; fi < best.length; fi++) {
+          for (let fi = 0; fi < n; fi++) {
             const [px, py] = points[fi](my - 0.5, mx - 0.5);
             const rgb = Number.isFinite(px) && Number.isFinite(py)
               ? sampleImageBilinear(best[fi].frame, px, py)
@@ -134,23 +146,27 @@ export function stackCanonicalFrames(frames, detections, options = {}) {
             vals[2][fi] = rgb[2];
           }
           for (let ch = 0; ch < 3; ch++) {
-            cell[(sy * SUB + sx) * 3 + ch] = medianOf(vals[ch], best.length);
-          }
-          if (best.length >= 2 && sy === 0 && sx === 0) {
-            let mean = 0;
-            for (let fi = 0; fi < best.length; fi++) {
-              mean += 0.2126 * vals[0][fi] + 0.7152 * vals[1][fi] + 0.0722 * vals[2][fi];
-            }
-            mean /= best.length;
-            let variance = 0;
-            for (let fi = 0; fi < best.length; fi++) {
-              const lum = 0.2126 * vals[0][fi] + 0.7152 * vals[1][fi] + 0.0722 * vals[2][fi];
-              variance += (lum - mean) ** 2;
-            }
-            noiseSum += Math.sqrt(variance / best.length);
-            noiseCount++;
+            cell[(sy * SUB + sx) * 3 + ch] = medianInto(scratch, vals[ch], n);
           }
         }
+      }
+      // Frame disagreement is measured at the module centre, not at a corner
+      // sub-cell, so boundary disagreement does not dominate sigma.
+      if (n >= 2) {
+        for (let fi = 0; fi < n; fi++) {
+          const [px, py] = points[fi](row, col);
+          const rgb = Number.isFinite(px) && Number.isFinite(py)
+            ? sampleImageBilinear(best[fi].frame, px, py)
+            : [255, 255, 255];
+          lum[fi] = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+        }
+        let mean = 0;
+        for (let fi = 0; fi < n; fi++) mean += lum[fi];
+        mean /= n;
+        let variance = 0;
+        for (let fi = 0; fi < n; fi++) variance += (lum[fi] - mean) ** 2;
+        noiseSum += Math.sqrt(variance / n);
+        noiseCount++;
       }
       const blockX = (col + quietZone) * moduleSize;
       const blockY = (row + quietZone) * moduleSize;
