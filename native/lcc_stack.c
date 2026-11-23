@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Sub-cell grid per module used by the multi-frame fusion. */
+#define LCC_STACK_SUB 16
+
 static int copy_frame(const LccImage *frame, uint8_t **out_rgb, int *out_w, int *out_h) {
   const size_t n = (size_t)frame->width * (size_t)frame->height * 3;
   uint8_t *data = lcc_alloc(n);
@@ -12,6 +15,41 @@ static int copy_frame(const LccImage *frame, uint8_t **out_rgb, int *out_w, int 
   *out_rgb = data;
   *out_w = frame->width;
   *out_h = frame->height;
+  return 1;
+}
+
+/* Per-channel median across at most 16 frames.  Even counts average the two
+   middle samples so 2-frame bursts still work; the rounding matches the JS
+   stacker. */
+static int median_of(const int *values, int n) {
+  int tmp[16];
+  if (n <= 0) return 255;
+  for (int i = 0; i < n; i++) tmp[i] = values[i];
+  for (int i = 1; i < n; i++) {
+    const int v = tmp[i];
+    int j = i - 1;
+    while (j >= 0 && tmp[j] > v) {
+      tmp[j + 1] = tmp[j];
+      j--;
+    }
+    tmp[j + 1] = v;
+  }
+  if (n & 1) return tmp[n / 2];
+  return (int)lcc_js_round((tmp[n / 2 - 1] + tmp[n / 2]) * 0.5);
+}
+
+/* Map a canonical module coordinate (centres at index + 0.5) into the source
+   frame.  Returns 0 when the projection is degenerate. */
+static int project_point(const LccDet *det, double mx, double my, double *px, double *py) {
+  if (det->has_h) {
+    const double den = det->H[6] * mx + det->H[7] * my + det->H[8];
+    if (fabs(den) < 1e-12) return 0;
+    *px = (det->H[0] * mx + det->H[1] * my + det->H[2]) / den;
+    *py = (det->H[3] * mx + det->H[4] * my + det->H[5]) / den;
+    return 1;
+  }
+  *px = det->origin_x + mx * det->s;
+  *py = det->origin_y + my * det->s;
   return 1;
 }
 
@@ -143,133 +181,93 @@ int lcc_stack_frames(
     lcc_release(best);
     return LCC_BAD_INPUT;
   }
-  const size_t pixel_count = byte_count / 3;
-  float *sum = lcc_alloc(pixel_count * 3 * sizeof(float));
-  uint16_t *counts = lcc_alloc(pixel_count * sizeof(uint16_t));
   uint8_t *data = lcc_alloc(byte_count);
-  if (!sum || !counts || !data) {
-    lcc_release(sum);
-    lcc_release(counts);
-    lcc_release(data);
+  if (!data) {
     lcc_release(best);
     return LCC_ERR;
   }
   memset(data, 255, byte_count);
 
-  typedef struct { float *v; int n; int cap; } Noise;
-  Noise *noises = NULL;
-  int noise_slots = 0;
-
-  for (int fi = 0; fi < best_n; fi++) {
-    const LccImage *frame = &frames[best[fi]];
-    const LccDet *det = &dets[best[fi]];
-    for (int y = 0; y < height; y++) {
-      const double my = ((double)y + 0.5) / module - quiet_zone;
-      if (my < 0 || my >= ref->N) continue;
-      int x0 = 0;
-      while (x0 < width && ((double)x0 + 0.5) / module - quiet_zone < 0) x0++;
-      int x1 = width;
-      while (x1 > x0 && ((double)(x1 - 1) + 0.5) / module - quiet_zone >= ref->N) x1--;
-      if (x0 >= x1) continue;
-      const double dmx = 1.0 / module;
-      double mx = ((double)x0 + 0.5) / module - quiet_zone;
-      double numx = 0, numy = 0, den = 1, dnumx = 0, dnumy = 0, dden = 0, sx0 = 0, sy0 = 0, dsx = 0;
-      if (det->has_h) {
-        numx = det->H[0] * mx + det->H[1] * my + det->H[2];
-        numy = det->H[3] * mx + det->H[4] * my + det->H[5];
-        den = det->H[6] * mx + det->H[7] * my + det->H[8];
-        dnumx = det->H[0] * dmx;
-        dnumy = det->H[3] * dmx;
-        dden = det->H[6] * dmx;
-      } else {
-        sx0 = det->origin_x + mx * det->s;
-        sy0 = det->origin_y + my * det->s;
-        dsx = det->s * dmx;
-      }
-      for (int x = x0; x < x1; x++) {
-        double sx, sy;
-        if (det->has_h) {
-          if (fabs(den) < 1e-12) {
-            numx += dnumx;
-            numy += dnumy;
-            den += dden;
-            continue;
-          }
-          sx = numx / den;
-          sy = numy / den;
-          numx += dnumx;
-          numy += dnumy;
-          den += dden;
-        } else {
-          sx = sx0;
-          sy = sy0;
-          sx0 += dsx;
-        }
-        if (!isfinite(sx) || !isfinite(sy)) continue;
-        int rgb[3];
-        lcc_sample_bilinear(frame, sx, sy, rgb);
-        const size_t p = (size_t)y * (size_t)width + (size_t)x;
-        const size_t q = p * 3;
-        sum[q] += (float)rgb[0];
-        sum[q + 1] += (float)rgb[1];
-        sum[q + 2] += (float)rgb[2];
-        counts[p]++;
-        if ((int)(p % (size_t)noise_stride) == 0) {
-          int slot = -1;
-          for (int s = 0; s < noise_slots; s++) {
-            if (noises[s].cap == (int)p) {
-              slot = s;
-              break;
-            }
-          }
-          if (slot < 0) {
-            Noise *next = realloc(noises, (size_t)(noise_slots + 1) * sizeof(Noise));
-            if (!next) continue;
-            noises = next;
-            slot = noise_slots++;
-            noises[slot].v = NULL;
-            noises[slot].n = 0;
-            noises[slot].cap = (int)p;
-          }
-          float *grown = realloc(noises[slot].v, (size_t)(noises[slot].n + 1) * sizeof(float));
-          if (!grown) continue;
-          noises[slot].v = grown;
-          noises[slot].v[noises[slot].n++] = (float)(0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]);
-        }
-      }
-    }
-  }
-
-  for (size_t p = 0; p < pixel_count; p++) {
-    const int n = counts[p];
-    if (n == 0) continue;
-    const size_t q = p * 3;
-    data[q] = (uint8_t)lcc_js_round(sum[q] / n);
-    data[q + 1] = (uint8_t)lcc_js_round(sum[q + 1] / n);
-    data[q + 2] = (uint8_t)lcc_js_round(sum[q + 2] / n);
-  }
-
+  /* Fusion happens on a 16x16 sub-cell grid inside every module, not on
+     individual canonical pixels.  Each frame contributes one bilinear sample
+     per sub-cell; the per-channel median across frames rejects a frame that
+     mis-sampled, blurred, or mis-classified that cell, and the fused value is
+     written as a solid block.  Sixteen cells per module keep the shape
+     quadrants intact (shape templates are classified on a 16x16 grid). */
+  int vals[3][16];
   double noise_sum = 0;
   int noise_count = 0;
-  for (int s = 0; s < noise_slots; s++) {
-    if (noises[s].n < 2) {
-      free(noises[s].v);
-      continue;
+  const int sub = LCC_STACK_SUB;
+
+  for (int row = 0; row < ref->N; row++) {
+    for (int col = 0; col < ref->N; col++) {
+      int cell[LCC_STACK_SUB][LCC_STACK_SUB][3];
+      for (int sy = 0; sy < sub; sy++) {
+        for (int sx = 0; sx < sub; sx++) {
+          const double mx = (double)col + ((double)sx + 0.5) / (double)sub;
+          const double my = (double)row + ((double)sy + 0.5) / (double)sub;
+          for (int fi = 0; fi < best_n; fi++) {
+            double px = 0, py = 0;
+            int rgb[3] = { 255, 255, 255 };
+            if (project_point(&dets[best[fi]], mx, my, &px, &py) && isfinite(px) && isfinite(py)) {
+              lcc_sample_bilinear(&frames[best[fi]], px, py, rgb);
+            }
+            vals[0][fi] = rgb[0];
+            vals[1][fi] = rgb[1];
+            vals[2][fi] = rgb[2];
+          }
+          for (int ch = 0; ch < 3; ch++) cell[sy][sx][ch] = median_of(vals[ch], best_n);
+        }
+      }
+      /* Frame disagreement is measured at the module centre, not at the
+         top-left sub-cell, so boundary disagreement does not dominate sigma. */
+      if (best_n >= 2) {
+        double lum[16];
+        for (int fi = 0; fi < best_n; fi++) {
+          double px = 0, py = 0;
+          int rgb[3] = { 255, 255, 255 };
+          if (project_point(&dets[best[fi]], (double)col + 0.5, (double)row + 0.5, &px, &py) &&
+              isfinite(px) && isfinite(py)) {
+            lcc_sample_bilinear(&frames[best[fi]], px, py, rgb);
+          }
+          lum[fi] = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+        }
+        double mean = 0;
+        for (int fi = 0; fi < best_n; fi++) mean += lum[fi];
+        mean /= best_n;
+        double var = 0;
+        for (int fi = 0; fi < best_n; fi++) var += (lum[fi] - mean) * (lum[fi] - mean);
+        noise_sum += sqrt(var / best_n);
+        noise_count++;
+      }
+      const double block_x0 = ((double)col + quiet_zone) * module;
+      const double block_y0 = ((double)row + quiet_zone) * module;
+      int x0 = (int)ceil(block_x0 - 0.5);
+      int x1 = (int)ceil(block_x0 + module - 0.5);
+      int y0 = (int)ceil(block_y0 - 0.5);
+      int y1 = (int)ceil(block_y0 + module - 0.5);
+      if (x0 < 0) x0 = 0;
+      if (y0 < 0) y0 = 0;
+      if (x1 > width) x1 = width;
+      if (y1 > height) y1 = height;
+      for (int y = y0; y < y1; y++) {
+        double v = ((double)y + 0.5) / module - quiet_zone - row;
+        int sy = (int)floor(v * sub);
+        if (sy < 0) sy = 0;
+        if (sy >= sub) sy = sub - 1;
+        for (int x = x0; x < x1; x++) {
+          double u = ((double)x + 0.5) / module - quiet_zone - col;
+          int sx = (int)floor(u * sub);
+          if (sx < 0) sx = 0;
+          if (sx >= sub) sx = sub - 1;
+          const size_t q = ((size_t)y * (size_t)width + (size_t)x) * 3;
+          data[q] = (uint8_t)cell[sy][sx][0];
+          data[q + 1] = (uint8_t)cell[sy][sx][1];
+          data[q + 2] = (uint8_t)cell[sy][sx][2];
+        }
+      }
     }
-    double mean = 0;
-    for (int i = 0; i < noises[s].n; i++) mean += noises[s].v[i];
-    mean /= noises[s].n;
-    double var = 0;
-    for (int i = 0; i < noises[s].n; i++) {
-      const double d = noises[s].v[i] - mean;
-      var += d * d;
-    }
-    var /= noises[s].n;
-    noise_sum += sqrt(var);
-    noise_count++;
-    free(noises[s].v);
   }
-  free(noises);
 
   *out_rgb = data;
   *out_w = width;
@@ -278,8 +276,6 @@ int lcc_stack_frames(
   *out_module = module;
   *out_noise = noise_count ? noise_sum / noise_count : 0;
   if (out_source) *out_source = best[0];
-  lcc_release(sum);
-  lcc_release(counts);
   lcc_release(best);
   return LCC_OK;
 }

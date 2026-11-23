@@ -14,6 +14,22 @@ function groupKey(det) {
   return `${det.version}|${det.N}`;
 }
 
+/** Per-channel median across frames; even counts average the middle two.
+ *  Sorts into a reusable scratch buffer so fusion allocates nothing per cell. */
+function medianInto(scratch, values, n) {
+  for (let i = 0; i < n; i++) {
+    const v = values[i];
+    let j = i - 1;
+    while (j >= 0 && scratch[j] > v) {
+      scratch[j + 1] = scratch[j];
+      j--;
+    }
+    scratch[j + 1] = v;
+  }
+  if (n % 2 === 1) return scratch[(n - 1) / 2];
+  return Math.round((scratch[n / 2 - 1] + scratch[n / 2]) / 2);
+}
+
 function pointAtOf(det) {
   if (typeof det.pointAt === 'function') return det.pointAt;
   if (Array.isArray(det.homography) && det.homography.length === 9) {
@@ -103,70 +119,83 @@ export function stackCanonicalFrames(frames, detections, options = {}) {
   if (width * height > MAX_IMAGE_PIXELS) {
     throw new Error('stack: output image exceeds the pixel budget');
   }
-  const sum = new Float32Array(width * height * 3);
-  const counts = new Uint16Array(width * height);
-  const noiseSamples = new Map();
-  const noiseStride = options.noiseStride ?? 257;
+  const data = new Uint8Array(width * height * 3).fill(255);
+  const SUB = 16;
+  const n = best.length;
+  const vals = [new Int32Array(n), new Int32Array(n), new Int32Array(n)];
+  const scratch = new Int32Array(n);
+  const lum = new Float64Array(n);
+  const cell = new Int32Array(SUB * SUB * 3);
+  const points = best.map((item) => pointAtOf(item.det));
+  let noiseSum = 0;
+  let noiseCount = 0;
 
-  for (const { frame, det } of best) {
-    const pointAt = pointAtOf(det);
-    for (let y = 0; y < height; y++) {
-      const my = (y + 0.5) / moduleSize - quietZone;
-      if (my < 0 || my >= ref.N) continue;
-      const row = Math.floor(my);
-      const v = my - row;
-      for (let x = 0; x < width; x++) {
-        const mx = (x + 0.5) / moduleSize - quietZone;
-        if (mx < 0 || mx >= ref.N) continue;
-        const col = Math.floor(mx);
-        const u = mx - col;
-        const [sx, sy] = pointAt(row + v - 0.5, col + u - 0.5);
-        const rgb = sampleImageBilinear(frame, sx, sy);
-        const p = y * width + x;
-        const q = p * 3;
-        sum[q] += rgb[0];
-        sum[q + 1] += rgb[1];
-        sum[q + 2] += rgb[2];
-        counts[p]++;
-        if (p % noiseStride === 0) {
-          let values = noiseSamples.get(p);
-          if (!values) {
-            values = [];
-            noiseSamples.set(p, values);
+  for (let row = 0; row < ref.N; row++) {
+    for (let col = 0; col < ref.N; col++) {
+      for (let sy = 0; sy < SUB; sy++) {
+        for (let sx = 0; sx < SUB; sx++) {
+          const my = row + (sy + 0.5) / SUB;
+          const mx = col + (sx + 0.5) / SUB;
+          for (let fi = 0; fi < n; fi++) {
+            const [px, py] = points[fi](my - 0.5, mx - 0.5);
+            const rgb = Number.isFinite(px) && Number.isFinite(py)
+              ? sampleImageBilinear(best[fi].frame, px, py)
+              : [255, 255, 255];
+            vals[0][fi] = rgb[0];
+            vals[1][fi] = rgb[1];
+            vals[2][fi] = rgb[2];
           }
-          values.push(0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]);
+          for (let ch = 0; ch < 3; ch++) {
+            cell[(sy * SUB + sx) * 3 + ch] = medianInto(scratch, vals[ch], n);
+          }
+        }
+      }
+      // Frame disagreement is measured at the module centre, not at a corner
+      // sub-cell, so boundary disagreement does not dominate sigma.
+      if (n >= 2) {
+        for (let fi = 0; fi < n; fi++) {
+          const [px, py] = points[fi](row, col);
+          const rgb = Number.isFinite(px) && Number.isFinite(py)
+            ? sampleImageBilinear(best[fi].frame, px, py)
+            : [255, 255, 255];
+          lum[fi] = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+        }
+        let mean = 0;
+        for (let fi = 0; fi < n; fi++) mean += lum[fi];
+        mean /= n;
+        let variance = 0;
+        for (let fi = 0; fi < n; fi++) variance += (lum[fi] - mean) ** 2;
+        noiseSum += Math.sqrt(variance / n);
+        noiseCount++;
+      }
+      const blockX = (col + quietZone) * moduleSize;
+      const blockY = (row + quietZone) * moduleSize;
+      const x0 = Math.max(0, Math.ceil(blockX - 0.5));
+      const x1 = Math.min(width, Math.ceil(blockX + moduleSize - 0.5));
+      const y0 = Math.max(0, Math.ceil(blockY - 0.5));
+      const y1 = Math.min(height, Math.ceil(blockY + moduleSize - 0.5));
+      for (let y = y0; y < y1; y++) {
+        const v = (y + 0.5) / moduleSize - quietZone - row;
+        const sy = Math.min(SUB - 1, Math.max(0, Math.floor(v * SUB)));
+        for (let x = x0; x < x1; x++) {
+          const u = (x + 0.5) / moduleSize - quietZone - col;
+          const sx = Math.min(SUB - 1, Math.max(0, Math.floor(u * SUB)));
+          const q = (y * width + x) * 3;
+          const c = (sy * SUB + sx) * 3;
+          data[q] = cell[c];
+          data[q + 1] = cell[c + 1];
+          data[q + 2] = cell[c + 2];
         }
       }
     }
   }
-
-  const data = new Uint8Array(width * height * 3).fill(255);
-  for (let p = 0; p < width * height; p++) {
-    const n = counts[p];
-    if (n === 0) continue;
-    const q = p * 3;
-    data[q] = Math.round(sum[q] / n);
-    data[q + 1] = Math.round(sum[q + 1] / n);
-    data[q + 2] = Math.round(sum[q + 2] / n);
-  }
-
-  let noiseSum = 0;
-  let noiseCount = 0;
-  for (const values of noiseSamples.values()) {
-    if (values.length < 2) continue;
-    const mean = values.reduce((a, b) => a + b, 0) / values.length;
-    const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length;
-    noiseSum += Math.sqrt(variance);
-    noiseCount++;
-  }
-  const noise = noiseCount ? noiseSum / noiseCount : 0;
 
   return {
     image: { width, height, data },
     frames: best.length,
     requested,
     stacked: true,
-    noise,
+    noise: noiseCount ? noiseSum / noiseCount : 0,
     version: ref.version,
     N: ref.N,
     moduleSize,

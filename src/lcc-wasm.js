@@ -144,7 +144,7 @@ function parseDecode(bytes) {
   if (status === 3) return null;
   if (status !== 0) throw new Error('LCC wasm decode failed');
   const payloadLen = view.getUint32(92, true);
-  const payload = bytes.slice(120, 120 + payloadLen);
+  const payload = bytes.slice(152, 152 + payloadLen);
   const shapeSet = view.getInt32(56, true);
   const ecc = view.getFloat64(20, true);
   let text = null;
@@ -179,6 +179,10 @@ function parseDecode(bytes) {
       constraintMaxDiff: view.getInt32(84, true),
       calibration: CALIBRATION[view.getInt32(88, true)] ?? 'identity',
       paletteMode: cString(bytes.subarray(104, 120)),
+      stackFrames: view.getInt32(120, true),
+      stackRequested: view.getInt32(124, true),
+      stackStacked: view.getInt32(128, true) === 1,
+      stackNoise: view.getFloat64(132, true),
     },
   };
 }

@@ -1,6 +1,5 @@
 import {
   encode,
-  decodeAuto,
   detectPerspective,
   renderSVG,
   stackCanonicalFrames,
@@ -75,6 +74,141 @@ let lastEncoded = null;
 let cameraStream = null;
 let continuousTimer = null;
 let decoding = false;
+let scanning = false;
+// Monotonic id for whatever currently owns the preview/status/result.  A slow
+// camera scan must not overwrite a newer upload (or vice versa).
+let operationSeq = 0;
+
+// --- decode worker -------------------------------------------------------
+// The worker owns its own WASM instance, so a scan no longer blocks the UI
+// thread.  Frames are handed over as transferred ArrayBuffers (zero copy).
+// A worker that never becomes ready, or stops answering, is retired so later
+// scans go straight to the local path instead of waiting again.
+const WORKER_READY_TIMEOUT_MS = 8000;
+const WORKER_REQUEST_TIMEOUT_MS = 15000;
+// Native scan budget is 1.2 s; the extra allowance covers one browser-side
+// stack + decode attempt after a native miss.
+const SCAN_TOTAL_BUDGET_MS = 2500;
+
+let decodeWorker = null;
+let decodeWorkerBroken = false;
+let decodeWorkerReady = false;
+const decodeWorkerWaiters = [];
+let decodeRequestSeq = 0;
+const decodeRequests = new Map();
+
+function settleWorkerWaiters(error) {
+  while (decodeWorkerWaiters.length) {
+    const waiter = decodeWorkerWaiters.shift();
+    if (!waiter) continue;
+    clearTimeout(waiter.timer);
+    if (error) waiter.reject(error);
+    else waiter.resolve();
+  }
+}
+
+function retireDecodeWorker(error) {
+  const reason = error ?? new Error('decode worker retired');
+  decodeWorkerBroken = true;
+  decodeWorkerReady = false;
+  try {
+    decodeWorker?.terminate();
+  } catch {
+    // Ignore: the worker is already gone.
+  }
+  decodeWorker = null;
+  settleWorkerWaiters(reason);
+  for (const pending of decodeRequests.values()) {
+    clearTimeout(pending.timer);
+    pending.reject(reason);
+  }
+  decodeRequests.clear();
+}
+
+function whenWorkerReady() {
+  if (decodeWorkerReady) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const waiter = { resolve, reject, timer: null };
+    waiter.timer = setTimeout(() => {
+      // Retire the stalled worker: the caller falls back locally once, and
+      // every later scan skips it instead of waiting another eight seconds.
+      retireDecodeWorker(new Error('decode worker did not become ready'));
+    }, WORKER_READY_TIMEOUT_MS);
+    decodeWorkerWaiters.push(waiter);
+  });
+}
+
+function getDecodeWorker() {
+  if (decodeWorker || decodeWorkerBroken) return decodeWorker;
+  if (typeof Worker === 'undefined') {
+    decodeWorkerBroken = true;
+    return null;
+  }
+  try {
+    decodeWorkerReady = false;
+    decodeWorker = new Worker(new URL('./lib/decode-worker.js', import.meta.url), { type: 'module' });
+    decodeWorker.onmessage = (event) => {
+      const message = event.data;
+      if (!message) return;
+      if (message.type === 'ready') {
+        decodeWorkerReady = true;
+        settleWorkerWaiters(null);
+        return;
+      }
+      if (message.type !== 'result') return;
+      const pending = decodeRequests.get(message.id);
+      if (!pending) return;
+      decodeRequests.delete(message.id);
+      clearTimeout(pending.timer);
+      pending.resolve(message);
+    };
+    decodeWorker.onerror = (event) => {
+      event?.preventDefault?.();
+      retireDecodeWorker(new Error('decode worker failed'));
+    };
+    decodeWorker.onmessageerror = () => {
+      retireDecodeWorker(new Error('decode worker message failed'));
+    };
+  } catch {
+    decodeWorkerBroken = true;
+    decodeWorker = null;
+  }
+  return decodeWorker;
+}
+
+async function decodeInWorker(frames) {
+  const worker = getDecodeWorker();
+  if (!worker) return null;
+  await whenWorkerReady();
+  return new Promise((resolve, reject) => {
+    const id = ++decodeRequestSeq;
+    // Start the worker's fallback budget when the request is actually posted,
+    // not while we were still waiting for the worker to become ready.
+    const deadline = Date.now() + SCAN_TOTAL_BUDGET_MS;
+    const pending = {
+      resolve,
+      reject,
+      timer: setTimeout(() => {
+        retireDecodeWorker(new Error('decode worker request timed out'));
+      }, WORKER_REQUEST_TIMEOUT_MS),
+    };
+    decodeRequests.set(id, pending);
+    const transfer = [];
+    const payload = frames.map((frame) => {
+      let data = frame.data;
+      if (data.byteOffset !== 0 || data.byteLength !== data.buffer.byteLength) data = data.slice();
+      transfer.push(data.buffer);
+      return { width: frame.width, height: frame.height, buffer: data.buffer };
+    });
+    try {
+      worker.postMessage({ type: 'decode', id, frames: payload, deadline }, transfer);
+    } catch (error) {
+      decodeRequests.delete(id);
+      clearTimeout(pending.timer);
+      reject(error);
+    }
+  });
+}
 
 function rgbToImageData(image) {
   const { width, height, data } = image;
@@ -300,25 +434,24 @@ function captureFrame() {
   return imageDataToRGB(ctx.getImageData(0, 0, w, h));
 }
 
-async function captureStack(count, onProgress) {
-  const frames = [];
+// Stack frames that were already captured.  Detection here never re-opens the
+// camera: a failed C scan falls back to the same burst, never to a new one.
+function buildStack(frames, onProgress) {
+  const count = frames.length;
   const detections = [];
   for (let i = 0; i < count; i++) {
-    const frame = captureFrame();
     let det = null;
     try {
-      det = detectPerspective(frame);
+      det = detectPerspective(frames[i]);
     } catch {
       // Skip frames without a usable symbol.
     }
-    frames.push(frame);
     detections.push(det);
     onProgress?.(i + 1, count);
-    if (i < count - 1) await new Promise((resolve) => setTimeout(resolve, 90));
   }
   try {
     try {
-      return await stackCanonicalFramesWasm(frames, detections, { quietZone: 4 });
+      return stackCanonicalFramesWasm(frames, detections, { quietZone: 4 });
     } catch {
       return stackCanonicalFrames(frames, detections, { quietZone: 4 });
     }
@@ -332,41 +465,111 @@ async function captureStack(count, onProgress) {
   }
 }
 
+/**
+ * Decode an already captured burst.  Returns the decode result plus the stack
+ * metadata used to produce it.  Prefers the worker; falls back to the main
+ * thread when workers are unavailable.
+ */
+function withinBudget(deadline) {
+  return !deadline || Date.now() < deadline;
+}
+
+function runDecodeLocal(frames, deadline) {
+  let result = null;
+  try {
+    result = scanFramesWasm(frames);
+    if (result) result.meta.detectionPath = 'detect+canonical';
+  } catch {
+    result = null;
+  }
+  if (result) return { result, stack: null };
+
+  let stack = null;
+  if (frames.length > 1 && withinBudget(deadline)) {
+    try {
+      stack = buildStack(frames);
+    } catch {
+      stack = null;
+    }
+    if (stack && withinBudget(deadline)) {
+      // The stacker picks the frame: with a single usable detection it returns
+      // that frame with stacked=false, so decode stack.image either way.
+      const image = stack.image ?? frames[frames.length - 1];
+      try {
+        result = decodeAutoWasm(image, { detector: stack.stacked ? 'axis' : 'perspective' });
+      } catch {
+        result = null;
+      }
+      if (result) result.meta.detectionPath = stack.stacked ? 'stack+axis' : 'direct';
+    }
+  }
+  if (!result && frames.length === 1 && withinBudget(deadline)) {
+    try {
+      result = decodeAutoWasm(frames[0]);
+      if (result) result.meta.detectionPath = 'direct';
+    } catch {
+      result = null;
+    }
+  }
+  return { result, stack };
+}
+
+async function runDecode(frames) {
+  if (getDecodeWorker()) {
+    const startedAt = Date.now();
+    try {
+      const message = await decodeInWorker(frames);
+      if (message) return { result: message.result ?? null, stack: message.stack ?? null };
+    } catch {
+      // If the buffers were transferred the local path cannot run; wait for
+      // the next capture instead of decoding detached memory.
+      const intact = frames.length > 0
+        && frames.every((frame) => frame.data && frame.data.byteLength === frame.width * frame.height * 3);
+      if (!intact) return { result: null, stack: null };
+      return runDecodeLocal(frames, startedAt + SCAN_TOTAL_BUDGET_MS);
+    }
+  }
+  return runDecodeLocal(frames, Date.now() + SCAN_TOTAL_BUDGET_MS);
+}
+
+/** Stack statistics prefer the values the scan reported for this attempt. */
+function stackInfoOf(outcome) {
+  const meta = outcome.result?.meta;
+  if (meta && meta.stackRequested > 0) {
+    return {
+      frames: meta.stackFrames,
+      requested: meta.stackRequested,
+      stacked: meta.stackStacked,
+      noise: meta.stackNoise,
+      moduleSize: meta.moduleSize,
+    };
+  }
+  return outcome.stack ?? null;
+}
+
 async function decodeRGB(image, options = {}) {
-  if (decoding) return false;
+  const op = options.op ?? ++operationSeq;
+  if (decoding || op !== operationSeq) return false;
   decoding = true;
   if (!options.silent) setStatus('解码中…', 'busy');
   await new Promise((resolve) => setTimeout(resolve, 20));
   try {
     let result = options.result ?? null;
-    // Single uploads: detect the symbol geometry first, warp one canonical
-    // frame, then decode that.  This is the same path as the multi-frame
-    // scanner, so the UI no longer sends a raw full image straight to decode.
-    if (!result && !options.detector && !options.stackInfo) {
-      try {
-        result = await scanFramesWasm([image]);
-        if (result) result.meta.detectionPath = 'detect+canonical';
-      } catch {
-        result = null;
-      }
-    }
+    let stackInfo = options.stackInfo ?? null;
     if (!result) {
-      try {
-        result = await decodeAutoWasm(image, options.detector ? { detector: options.detector } : {});
-        if (result) result.meta.detectionPath = 'direct';
-      } catch {
-        result = null;
-      }
+      const outcome = await runDecode([image]);
+      if (op !== operationSeq) return false;
+      result = outcome.result;
+      stackInfo = stackInfo ?? stackInfoOf(outcome);
     }
-    if (!result) {
-      result = decodeAuto(image, options.detector ? { detector: options.detector } : {});
-      result.meta.detectionPath = 'direct';
-    }
-    if (options.stackInfo) {
-      result.meta.stackFrames = options.stackInfo.frames;
-      result.meta.stackRequested = options.stackInfo.requested;
-      result.meta.stackModuleSize = options.stackInfo.moduleSize;
-      result.meta.stackNoise = options.stackInfo.noise;
+    if (!result) throw new Error('LCC decode failed');
+    // A newer capture or upload now owns the preview and the result panel.
+    if (op !== operationSeq) return false;
+    if (stackInfo) {
+      result.meta.stackFrames = stackInfo.frames;
+      result.meta.stackRequested = stackInfo.requested;
+      result.meta.stackModuleSize = stackInfo.moduleSize;
+      result.meta.stackNoise = stackInfo.noise;
     }
     const payload = result.payload;
     let text = result.text;
@@ -387,7 +590,7 @@ async function decodeRGB(image, options = {}) {
     );
     return true;
   } catch (e) {
-    if (!options.silent) setStatus(`识别失败：${friendlyError(e)}`, 'err');
+    if (!options.silent && op === operationSeq) setStatus(`识别失败：${friendlyError(e)}`, 'err');
     return false;
   } finally {
     decoding = false;
@@ -395,47 +598,48 @@ async function decodeRGB(image, options = {}) {
 }
 
 async function captureAndDecode({ silent = false } = {}) {
-  const count = Number($('stackFrames').value) || 1;
-  const frames = [];
-  for (let i = 0; i < count; i++) {
-    if (count > 1) setStatus(`多帧叠加：${i}/${count}…`, 'busy');
-    frames.push(captureFrame());
-    if (i < count - 1) await new Promise((resolve) => setTimeout(resolve, 90));
-  }
+  if (scanning) return false;
+  const op = ++operationSeq;
+  scanning = true;
   try {
-    const scanned = await scanFramesWasm(frames);
-    if (scanned) {
-      drawImage(scanCanvas, frames[frames.length - 1]);
-      return decodeRGB(frames[frames.length - 1], {
-        result: scanned,
-        stackInfo: {
-          frames: count,
-          requested: count,
-          stacked: count > 1,
-        },
-        silent,
-      });
+    const count = Number($('stackFrames').value) || 1;
+    // Capture the whole burst first, then hand every frame to the worker in
+    // one request.  Nothing below re-opens the camera: both the C scan and the
+    // stacking fallback reuse this exact burst.
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      if (op !== operationSeq) return false;
+      if (count > 1) setStatus(`多帧叠加：${i + 1}/${count}…`, 'busy');
+      frames.push(captureFrame());
+      if (i < count - 1) await new Promise((resolve) => setTimeout(resolve, 90));
     }
-  } catch {
-    // C scan missed the symbol; the JS detector is the fallback.
+    if (op !== operationSeq) return false;
+    // Paint the preview before the buffers are transferred to the worker.
+    drawImage(scanCanvas, frames[frames.length - 1]);
+    setStatus(count > 1 ? `识别中（${count} 帧）…` : '识别中…', 'busy');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    let outcome = { result: null, stack: null };
+    try {
+      outcome = await runDecode(frames);
+    } catch {
+      outcome = { result: null, stack: null };
+    }
+    if (op !== operationSeq) return false;
+    if (!outcome.result) {
+      if (!silent) setStatus('识别失败：没有找到可解码的 LCC 码面。', 'err');
+      return false;
+    }
+    if (outcome.stack?.stacked) drawImage(scanCanvas, outcome.stack.image);
+    return decodeRGB(null, {
+      result: outcome.result,
+      stackInfo: stackInfoOf(outcome),
+      silent,
+      op,
+    });
+  } finally {
+    scanning = false;
   }
-  let stack;
-  if (count > 1) {
-    stack = await captureStack(count);
-  } else {
-    stack = {
-      image: frames[0],
-      frames: 1,
-      requested: 1,
-      stacked: false,
-    };
-  }
-  drawImage(scanCanvas, stack.image);
-  return decodeRGB(stack.image, {
-    detector: stack.stacked ? 'axis' : 'perspective',
-    stackInfo: stack,
-    silent,
-  });
 }
 
 function scheduleContinuous() {
@@ -443,9 +647,13 @@ function scheduleContinuous() {
   if (!$('continuous').checked || !cameraStream) return;
   continuousTimer = setTimeout(async () => {
     if (!$('continuous').checked || !cameraStream) return;
+    const stream = cameraStream;
     try {
       setStatus('扫描中…请让码面完整进入画面', 'busy');
       const ok = await captureAndDecode({ silent: true });
+      // A restart during the scan owns a different stream; its own timer will
+      // take over, and this stale result must not toggle the checkbox.
+      if (cameraStream !== stream) return;
       if (ok) {
         $('continuous').checked = false;
         return;
@@ -453,6 +661,7 @@ function scheduleContinuous() {
     } catch {
       // Ignore transient camera errors and try again.
     }
+    if (cameraStream !== stream) return;
     scheduleContinuous();
   }, 750);
 }
@@ -720,14 +929,16 @@ document.querySelectorAll('[data-example]').forEach((btn) => {
 $('file').addEventListener('change', async (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
+  const op = ++operationSeq;
   try {
     setStatus('正在读取图片…', 'busy');
     const img = await loadImageFile(file);
+    if (op !== operationSeq) return;
     const image = imageElementToRGB(img, 2000);
     drawImage(scanCanvas, image);
-    await decodeRGB(image);
+    await decodeRGB(image, { op });
   } catch (e) {
-    setStatus(friendlyError(e), 'err');
+    if (op === operationSeq) setStatus(friendlyError(e), 'err');
   } finally {
     event.target.value = '';
   }
@@ -769,3 +980,5 @@ $('copy').addEventListener('click', async () => {
 // Default demo on first load.
 textEl.value = 'https://example.com/lcc?demo=1';
 generate();
+// Warm the decode worker (and its WASM instance) while the user gets ready.
+getDecodeWorker();
