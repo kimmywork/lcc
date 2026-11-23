@@ -22,7 +22,6 @@ const skip = new Set([
   'layout.js',
   'palettes.js',
   'whitening.js',
-  'local-rank.js',
   'illumination.js',
   'ecc',
   'format',

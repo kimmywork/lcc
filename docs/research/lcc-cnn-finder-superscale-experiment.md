@@ -163,7 +163,7 @@ C 端失败的原因不是卷积算错，而是**输入分布对不上**：训�
 - finder CNN、SR CNN、双线性+abs、形状 NCC 取绝对值、cheap MLP、小卷积 stem：**全部移除**。
 - 生产路径只保留：C 实际残差训练的 **width8 形状分类器 + 16×16 模板门控**；模块有效尺寸 `<12 px` 时回退模板。
 - 不再有 `LCC_ENABLE_MODELS` / `build:wasm:model` / `setWasmFeatures` 这些开关。
-- 默认 `lcc.wasm` 约 176 KB。
+- 当时默认 `lcc.wasm` 约 176 KB；现在只有一个 `lcc-decoder.wasm`（SIMD 约 233 KB），不再有模型版。
 - 旧实验的 feature 编号只保留在历史记录中，不再可运行。
 
 ---

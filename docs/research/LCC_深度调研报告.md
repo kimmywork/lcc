@@ -1,13 +1,13 @@
 > 命名迁移（2026-11-12）：文中 `L*` 为 legacy 名称；当前规范使用 `G/C` 命名，完整映射见 README 和 `docs/lcc-spec.md`。
 
-> **2026-11-12 最终状态**：这是一份外部独立调研记录，部分实验代码/feature 开关已在最终清理中移除；当前实现以 `docs/research/lcc-experiment-status.md` 为准。
+> **2026-11-23 状态**：这是一份外部独立调研记录，部分实验代码/feature 开关已移除；当前实现与限制以 README 和 `docs/lcc-spec.md` 为准，历史实验记录已清理。
 
 # LCC 解码器下一阶段深度调研报告
 ## 面向 C/WASM 的模型架构、前沿方法与解码器优化路线
 
 **日期**：2026-11-11  
 **对象**：LCC（Layered Chromatic Code）参考实现，JS 编码器 + C 解码核心 + WASM 扫描路径  
-**约束**：浏览器/WASM，无 ONNX Runtime / PyTorch / OpenCV DNN；默认 `lcc.wasm` ≈140 KB，模型版 270–290 KB
+**约束**：浏览器/WASM，无 ONNX Runtime / PyTorch / OpenCV DNN；当时默认 `lcc.wasm` ≈140 KB，模型版 270–290 KB（现为单一 `lcc-decoder.wasm`，约 233 KB）
 
 ---
 
@@ -364,6 +364,8 @@ finder 大网、像素 SR、diffusion、WebGPU/WebNN 默认路径、模块级 Tr
 
 ## P1｜RS 擦除 + GMD/Chase 多档扫描 + CRC32 列表选择 ★★★★★
 
+> **实施状态（2026-11-23）**：已证伪。E1 oracle erasure 在 130 个强制对齐硬帧上只多救 6 帧；失败是灾难性丢符号，不是“差几个符号”。不再投入。
+
 **核心思想**  
 把 RS 从 errors-only 升级为 errors-and-erasures，按模块可靠度排序，扫若干擦除档位 `e ∈ {0,4,8,…,n−k}`，每档解一次，用**已有的 CRC32** 从候选列表里挑正确码字。这就是 Forney 的 GMD（1966）+ Chase 型翻转 + 极化码里的 CRC 辅助列表选择，三者的组合。
 
@@ -621,6 +623,8 @@ finder 大网、像素 SR、diffusion、WebGPU/WebNN 默认路径、模块级 Tr
 ---
 
 ## P8｜多帧模块级后验合并（不是像素叠加）★★★★☆
+
+> **实施状态（2026-11-23）**：部分实现。扫描路径已做 16×16 子格跨帧中值融合、帧质量门控和 1.2 s 兜底预算；本节要求的符号级后验合并仍未做（需要格式带解出色板后分类）。
 
 **核心思想**  
 每帧独立算出**每模块的 8 类后验**，跨帧对齐到 canonical 网格后**相乘（对数相加）**，再硬判/软判。与你们已有的像素级 canonical 叠加**完全不同**：融合发生在分类之后，能纠正单帧的硬判错误。
@@ -952,7 +956,7 @@ finder 大网、像素 SR、diffusion、WebGPU/WebNN 默认路径、模块级 Tr
 **系统**
 9. 平均 / 中位 / **p95** 耗时，**成功路径与失败路径分开统计**
 10. 二值化平均尝试次数、模型调用模块数、RS 解码尝试次数
-11. `lcc.wasm` 体积（默认/模型版）、WASM 峰值内存、冷启动时间
+11. `lcc-decoder.wasm` 体积（SIMD/baseline）、WASM 峰值内存、冷启动时间
 
 ## 8.4 基线（每个新方案都必须同时对比）
 
